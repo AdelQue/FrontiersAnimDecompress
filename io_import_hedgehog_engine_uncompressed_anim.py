@@ -86,6 +86,8 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
     def execute(self, context):
         for animfile in self.files:
             Arm = bpy.context.active_object
+            Arm_OG = bpy.data.objects["ORIGINAL"]
+            
             if not Arm:
                 raise ValueError("No active object. Please select an armature as your active object.")
             Scene = bpy.context.scene
@@ -132,13 +134,13 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
                     # Make entire dictionary with all bones beforehand in case BoneCount variable is less than actual bone count
                     # (Useful for things like ModelFBX Skeletons with extra bones like "Mesh_Body")
                     BoneMats = {}
-                    for y in Arm.pose.bones:
+                    for y in Arm_OG.pose.bones:
                         BoneMats.update({y.name:mathutils.Matrix()})
                     BoneMatsNoScale = BoneMats.copy()
 
                     # Extract and store anim data
                     for y in range(BoneCount):
-                        Bone = Arm.pose.bones[y]
+                        Bone = Arm_OG.pose.bones[y]
 
                         tmpQuat = struct.unpack('<ffff', CurFile.read(0x10))
                         tmpPos = struct.unpack('<fff', CurFile.read(0xC))
@@ -187,23 +189,26 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
                                 else:
                                     BonesProcessed += 1
 
-                                if self.use_yx_orientation:
-                                    ParentMat = mathutils.Matrix() @ mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'X') @ mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'Z')
-                                else:
-                                    ParentMat = mathutils.Matrix()
+                                if Bone.name in BoneMats:
+                                    Bone_OG = Arm_OG.pose.bones[Bone.name]
+                                    if self.use_yx_orientation:
+                                        ParentMat = mathutils.Matrix() @ mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'X') @ mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'Z')
+                                    else:
+                                        ParentMat = mathutils.Matrix()
+                                    
+                                    for z in reversed(Bone_OG.parent_recursive):
+                                        if z.name in BoneMats:
+                                            ParentMat @= BoneMatsNoScale[z.name]
+                                            
+                                    tmpPos, tmpQuat, tmpScl = BoneMats[Bone.name].decompose() # Use scaled transform of active bone,
 
-                                for z in reversed(Bone.parent_recursive):
-                                    ParentMat @= BoneMatsNoScale[z.name]
+                                    Bone.rotation_quaternion = Arm.convert_space(pose_bone=Bone,matrix = ParentMat @ ((mathutils.Quaternion(tmpQuat)).to_matrix().to_4x4()),from_space='POSE',to_space='LOCAL').to_quaternion()
+                                    Bone.location = Arm.convert_space(pose_bone=Bone,matrix = ParentMat @ ((mathutils.Matrix.Translation(tmpPos))),from_space='POSE',to_space='LOCAL').translation
+                                    Bone.scale = tmpScl
 
-                                tmpPos, tmpQuat, tmpScl = BoneMats[Bone.name].decompose() # Use scaled transform of active bone,
-
-                                Bone.rotation_quaternion = Arm.convert_space(pose_bone=Bone,matrix = ParentMat @ ((mathutils.Quaternion(tmpQuat)).to_matrix().to_4x4()),from_space='POSE',to_space='LOCAL').to_quaternion()
-                                Bone.location = Arm.convert_space(pose_bone=Bone,matrix = ParentMat @ ((mathutils.Matrix.Translation(tmpPos))),from_space='POSE',to_space='LOCAL').translation
-                                Bone.scale = tmpScl
-
-                                Bone.keyframe_insert("location")
-                                Bone.keyframe_insert("rotation_quaternion")
-                                Bone.keyframe_insert("scale")
+                                    Bone.keyframe_insert("location")
+                                    Bone.keyframe_insert("rotation_quaternion")
+                                    Bone.keyframe_insert("scale")
 
                                 for z in Bone.children:
                                     queue.append((z, Level + 1))
