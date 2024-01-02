@@ -87,7 +87,7 @@ struct anim_output
 	std::vector<std::vector<rtm::qvvf>> all_tracks;
 };
 
-static bool compressed_anim_to_buffer(const char* filename, const char*& out_buffer, size_t& out_buffer_size)
+static bool compressed_anim_to_buffer(const char* filename, const char*& out_buffer, size_t& out_buffer_size, uint32_t offset_loc)
 {
 	FILE* file;
 
@@ -99,10 +99,14 @@ static bool compressed_anim_to_buffer(const char* filename, const char*& out_buf
 		return false;
 	}
 
-	//Get file length
-	fseek(file, 0, SEEK_END);
-	out_buffer_size = ftell(file) - 0x80 - 0x34;
-	fseek(file, 0x80, SEEK_SET);
+	//Find buffer, get buffer length
+	uint32_t out_buffer_offset;
+	fseek(file, offset_loc, SEEK_SET);
+	fread(&out_buffer_offset, sizeof(out_buffer_offset), 1, file);
+	fseek(file, out_buffer_offset + 0x40, SEEK_SET);
+	fread(&out_buffer_size, 4, 1, file);
+	fseek(file, out_buffer_offset + 0x40, SEEK_SET);
+
 
 	//Allocate memory
 	out_buffer = (char*)malloc(out_buffer_size + 1);
@@ -151,14 +155,14 @@ static bool anim_to_buffer(const char* filename, const char*& out_buffer, size_t
 	return true;
 }
 
-bool decompress(char* filename)
+bool decompress(char* filename, uint32_t data_offset)
 {
     decompression_context<default_transform_decompression_settings> context;
 
 	const char* buffer = nullptr;
 	size_t buffer_size = 0;
 
-	if (!compressed_anim_to_buffer(filename, buffer, buffer_size))
+	if (!compressed_anim_to_buffer(filename, buffer, buffer_size, data_offset))
 	{
 		std::cout << "Failed to read file to buffer" << std::endl;
 		return false;
@@ -311,7 +315,7 @@ bool compress(char* filename)
 	char* out_name;
 	char* suffix_outanim = strstr(filename, ".outanim");
 	if (suffix_outanim != NULL && strcmp(suffix_outanim, ".outanim") == 0) {
-		int new_len = strlen(filename) - strlen(".outanim");
+		size_t new_len = strlen(filename) - strlen(".outanim");
 		out_name = (char*)malloc(new_len + 1 + strlen(".anm.pxd"));
 		strncpy(out_name, filename, new_len);
 		out_name[new_len] = '\0';
@@ -411,7 +415,7 @@ int main(int argc, char* argv[])
 
 	if (!strcmp(dot, ".pxd"))
 	{
-		if (!decompress(argv[1]))
+		if (!decompress(argv[1], 0x68))
 			return 1;
 	}
 	else if (!strcmp(dot, ".outanim"))
