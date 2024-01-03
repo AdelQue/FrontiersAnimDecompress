@@ -210,14 +210,16 @@ bool decompress(char* filename, uint32_t data_offset)
 	char* suffix_pxd = strstr(filename, ".pxd");
 	if (suffix_pxd != NULL && strcmp(suffix_pxd, ".pxd") == 0) {
 		char* suffix_anm_pxd = strstr(filename, ".anm.pxd");
-		int new_len;
-		if (suffix_anm_pxd != NULL && strcmp(suffix_anm_pxd, ".anm.pxd") == 0) {
+		size_t new_len;
+		if (suffix_anm_pxd != NULL && strcmp(suffix_anm_pxd, ".anm.pxd") == 0)
 			new_len = strlen(filename) - strlen(".anm.pxd");
-		}
-		else {
+		else
 			new_len = strlen(filename) - strlen(".pxd");
-		}
-		out_name = (char*)malloc(new_len + 1 + strlen(".outanim"));
+		
+		if (data_offset == 0x70)
+			out_name = (char*)malloc(new_len + 1 + strlen(".root.outanim"));
+		else
+			out_name = (char*)malloc(new_len + 1 + strlen(".outanim"));
 		strncpy(out_name, filename, new_len);
 		out_name[new_len] = '\0';
 	}
@@ -225,7 +227,10 @@ bool decompress(char* filename, uint32_t data_offset)
 		out_name = (char*)malloc(strlen(filename) + 1);
 		strcpy(out_name, filename);
 	}
-	strcat(out_name, ".outanim");
+	if (data_offset == 0x70)
+		strcat(out_name, ".root.outanim");
+	else
+		strcat(out_name, ".outanim");
 	
 	std::ofstream wf(out_name, std::ios::out | std::ios::binary);
 	if (!wf) {
@@ -415,7 +420,9 @@ int main(int argc, char* argv[])
 
 	if (!strcmp(dot, ".pxd"))
 	{
-		if (!decompress(argv[1], 0x68))
+		if (!decompress(argv[1], 0x68))    
+			return 1;
+		if (!decompress(argv[1], 0x70))
 			return 1;
 	}
 	else if (!strcmp(dot, ".outanim"))
