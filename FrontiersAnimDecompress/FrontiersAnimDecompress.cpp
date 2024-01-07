@@ -99,10 +99,19 @@ static bool compressed_anim_to_buffer(const char* filename, const char*& out_buf
 		return false;
 	}
 
+	//Get file length
+	fseek(file, 0, SEEK_END);
+	size_t file_size = ftell(file);
+
 	//Find buffer, get buffer length
 	uint32_t out_buffer_offset;
 	fseek(file, offset_loc, SEEK_SET);
 	fread(&out_buffer_offset, sizeof(out_buffer_offset), 1, file);
+	if (!out_buffer_offset or out_buffer_offset + 0x40 > file_size) // Animations compressed with old versions of app would set offset of nonexistent root motion beyond EOF
+	{
+		std::cout << "No root motion chunk to decompress" << std::endl;
+		return false;
+	}
 	fseek(file, out_buffer_offset + 0x40, SEEK_SET);
 	fread(&out_buffer_size, 4, 1, file);
 	fseek(file, out_buffer_offset + 0x40, SEEK_SET);
