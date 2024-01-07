@@ -1,11 +1,11 @@
 bl_info = {
     "name": "Hedgehog Engine 2 Decompressed Animation Import",
     "author": "Turk, WistfulHopes, AdelQ",
-    "version": (1, 1, 0),
+    "version": (1, 1, 1),
     "blender": (3, 3, 0),
     "location": "File > Import-Export",
     "description": "A script to import decompressed animations from Hedgehog Engine 2 games",
-    "warning": "",
+    "warning": "TEST FOR ROOT MOTION IMPORT",
     "category": "Import-Export",
 }
 import bpy
@@ -52,12 +52,12 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
 
     loop_anim: EnumProperty(
         items=[
-            ("loopAuto", "Auto", "Automatically determine if the animation is a loop based on the file name", 1),
-            ("loopYes", "Yes", "Treat the animation as a looping animation, shifting the start frame by +1", 2),
-            ("loopNo", "No", "Play the whole animation from start to end. May result in hitching during viewport playback if it's supposed to be a loop, but still recommended for batch animation conversions", 3),
+            ("loopAuto", "Auto", "Fix loop if \"_loop\" is in the file name", 1),
+            ("loopYes", "Yes", "Copies the first frame to the last frame", 2),
+            ("loopNo", "No", "Import the last frame's pose data from the file", 3),
             ],
         name="Loop",
-        description="Determines if this animation is meant to be a loop. This shifts the start frame by one to prevent hitching during playback (start frame still needs to be shifted back before export)",
+        description="For animations that got messed up from being recompressed and decompressed multiple times",
         default="loopNo",
         )
 
@@ -66,7 +66,7 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
         uiSceneBox = layout.box()
         uiSceneBox.label(text="Animation Settings",icon='ACTION')
         uiSceneRowLoop = uiSceneBox.row()
-        uiSceneRowLoop.label(text="Is Loop?")
+        uiSceneRowLoop.label(text="Fix Loop:")
         uiSceneRowLoop.prop(self, "loop_anim", text="")
 
         uiBoneBox = layout.box()
@@ -93,9 +93,11 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
 
         for animfile in self.files:
             CurFile = open(os.path.join(os.path.dirname(self.filepath), animfile.name),"rb")
-
+            AnimName = os.path.basename(animfile.name)
+            for x in [".outanim", ".anm", ".pxd"]:
+                AnimName = AnimName.replace(x, "")
             Arm.animation_data_create()
-            action = bpy.data.actions.new(os.path.basename(animfile.name))
+            action = bpy.data.actions.new(AnimName)
             Arm.animation_data.action = action
             
             PlayRate = struct.unpack('<f', CurFile.read(0x4))[0]
@@ -163,7 +165,7 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
                 
                 # Method 1: BFS algorithm to go down the parent hierarchy calculating the unscaled position matrices.
                 # Needs scene updates to be accurate. Keeps track of bone hierarchy level so scene updates only after each level rather than per bone.
-                # More complex than stardard BFS algorithm, but HUUUUUUGE performance improvement from updating the scene less. 
+                # More complex than stardard BFS algorithm, but HUUUUUUGE performance improvement by updating the scene less. 
                 
                 if self.scale_correct == 'accurate':
                     for y in root_bones(Arm):
@@ -232,7 +234,53 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
 
                 else:
                     raise TypeError("None or invalid scale correction method.")
-                    
+                
+            
+            # Add Root Motion
+            Filename = os.path.basename(animfile.name)
+            RootFilename = Filename.rsplit(".", 1)
+            RootFilename = RootFilename[0] + ".root." + RootFilename[1]
+            CurRootFile = open(os.path.join(os.path.dirname(self.filepath), RootFilename),"rb")
+            Bone = Arm.pose.bones[0]
+            if Bone.name != "Reference":
+                raise ValueError("Reference bone should be the only root bone")
+                
+            for x in range(FrameCount): 
+                CurRootFile.seek(0xC+0x30*x)
+                Scene.frame_set(x)
+
+                tmpQuat = struct.unpack('<ffff', CurRootFile.read(0x10))
+                tmpPos = struct.unpack('<fff', CurRootFile.read(0xC))
+                tmpFloat = struct.unpack('<f', CurRootFile.read(0x4))
+                tmpScl = struct.unpack('<fff', CurRootFile.read(0xC))
+                CurRootFile.read(4)
+
+                if self.use_yx_orientation:
+                    tmpPos = mathutils.Vector((tmpPos[2],tmpPos[0],tmpPos[1]))
+                    tmpQuat = mathutils.Quaternion((tmpQuat[3],tmpQuat[2],tmpQuat[0],tmpQuat[1]))
+                    if tmpScl != (0.0,0.0,0.0):
+                        tmpScl = mathutils.Vector((tmpScl[2],tmpScl[0],tmpScl[1]))
+                    else:
+                        tmpScl = mathutils.Vector((1.0,1.0,1.0))
+                else:
+                    tmpPos = mathutils.Vector((tmpPos[0],tmpPos[1],tmpPos[2]))
+                    tmpQuat = mathutils.Quaternion((tmpQuat[3],tmpQuat[0],tmpQuat[1],tmpQuat[2]))
+                    if tmpScl != (0.0,0.0,0.0):
+                        tmpScl = mathutils.Vector((tmpScl[0],tmpScl[1],tmpScl[2]))
+                    else:
+                        tmpScl = mathutils.Vector((1.0,1.0,1.0))
+
+                Bone.rotation_quaternion = Arm.convert_space(pose_bone = Bone, matrix = (mathutils.Quaternion(tmpQuat)).to_matrix().to_4x4(), from_space = 'POSE', to_space = 'LOCAL').to_quaternion()
+                Bone.location = Arm.convert_space(pose_bone = Bone, matrix = (mathutils.Matrix.Translation(tmpPos)), from_space = 'POSE', to_space = 'LOCAL').translation
+                Bone.scale = tmpScl
+                
+                Bone.keyframe_insert('rotation_quaternion')
+                Bone.keyframe_insert('location')
+                Bone.keyframe_insert('scale')
+
+            CurRootFile.close()
+            del CurRootFile   
+                
             CurFile.close()
             del CurFile
         
