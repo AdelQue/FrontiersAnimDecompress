@@ -226,7 +226,7 @@ bool decompress(char* filename, uint32_t data_offset)
 			new_len = strlen(filename) - strlen(".pxd");
 		
 		if (data_offset == 0x70)
-			out_name = (char*)malloc(new_len + 1 + strlen(".root.outanim"));
+			out_name = (char*)malloc(new_len + 1 + strlen(".outanim-root"));
 		else
 			out_name = (char*)malloc(new_len + 1 + strlen(".outanim"));
 		strncpy(out_name, filename, new_len);
@@ -237,7 +237,7 @@ bool decompress(char* filename, uint32_t data_offset)
 		strcpy(out_name, filename);
 	}
 	if (data_offset == 0x70)
-		strcat(out_name, ".root.outanim");
+		strcat(out_name, ".outanim-root");
 	else
 		strcat(out_name, ".outanim");
 	
@@ -261,26 +261,10 @@ bool decompress(char* filename, uint32_t data_offset)
 	return true;
 }
 
-#pragma optimize("", off) 
-bool compress(char* filename)
+track_array_qvvf load_tracks(const char*& buffer, ansi_allocator& allocator, uint32_t sample_count, float sample_rate, uint32_t track_count)
 {
-	const char* buffer = nullptr;
-	size_t buffer_size = 0;
-
-	if (!anim_to_buffer(filename, buffer, buffer_size))
-	{
-		std::cout << "Failed to read file to buffer" << std::endl;
-		return false;
-	}
-
-	float duration = *(float*)&buffer[0];
-	uint32_t sample_count = *(uint32_t*)&buffer[4];
-	float sample_rate = (float)(sample_count - 1) / duration;
-	uint32_t track_count = *(uint32_t*)&buffer[8];
-
-	ansi_allocator allocator;
 	track_array_qvvf raw_track_list(allocator, track_count);
-	
+
 	for (uint32_t i = 0; i < track_count; i++)
 	{
 		std::vector<rtm::qvvf> track;
@@ -302,9 +286,61 @@ bool compress(char* filename)
 		}
 		raw_track_list[i] = std::move(raw_track);
 	}
-	
-	std::cout << "Tracks read" << std::endl;
-	
+	return raw_track_list;
+}
+
+#pragma optimize("", off) 
+bool compress(char* filename)
+{
+	const char* buffer = nullptr;
+	const char* root_buffer = nullptr;
+	size_t buffer_size = 0;
+	size_t root_buffer_size = 0;
+	bool root = false;
+
+	if (!anim_to_buffer(filename, buffer, buffer_size))
+	{
+		std::cout << "Failed to read file to buffer" << std::endl;
+		return false;
+	}
+
+	// Check root file
+	char* root_filename;
+	root_filename = (char*)malloc(strlen(filename) + strlen("-root"));
+	strcpy(root_filename, filename);
+	strcat(root_filename, "-root");
+	FILE* file;
+	file = fopen(root_filename, "rb");
+	if (file)
+	{
+		std::cout << "Found root file" << std::endl;
+		root = true;
+		fclose(file);
+		if (!anim_to_buffer(root_filename, root_buffer, root_buffer_size))
+		{
+			std::cout << "Failed to read root file to buffer" << std::endl;
+			return false;
+		}
+	}
+	else
+		std::cout << "No root anim file found, main only" << std::endl;
+
+	ansi_allocator allocator;
+	ansi_allocator root_allocator;
+	float duration = *(float*)&buffer[0];
+	uint32_t sample_count = *(uint32_t*)&buffer[4];
+	float sample_rate = (float)(sample_count - 1) / duration;
+	uint32_t track_count = *(uint32_t*)&buffer[8];
+
+	track_array_qvvf raw_track_list = load_tracks(buffer, allocator, sample_count, sample_rate, track_count);
+
+	if (!anim_to_buffer(filename, buffer, buffer_size))
+	{
+		std::cout << "Failed to read tracks" << std::endl;
+		return false;
+	}
+	std::cout << "Main tracks read" << std::endl;	
+
 	compression_settings settings;
 	settings.level = compression_level8::highest;
 	settings.rotation_format = rotation_format8::quatf_drop_w_variable;
@@ -316,15 +352,36 @@ bool compress(char* filename)
 
 	output_stats stats;
 	compressed_tracks* out_compressed_tracks = nullptr;
-	error_result result = compress_track_list(allocator, raw_track_list, settings, out_compressed_tracks, stats);
+	compressed_tracks* root_out_compressed_tracks = nullptr;
 
+	error_result result = compress_track_list(allocator, raw_track_list, settings, out_compressed_tracks, stats);
 	if (out_compressed_tracks == nullptr)
 	{
 		std::cout << "Failed to compress anim: " << result.c_str() << std::endl;
 		return false;
 	}
-	
-	std::cout << "Compressed tracks" << std::endl;
+	std::cout << "Compressed main tracks" << std::endl;
+
+
+	if (root == true)
+	{
+		track_array_qvvf raw_root_track_list = load_tracks(root_buffer, root_allocator, sample_count, sample_rate, 1);
+
+		if (!anim_to_buffer(root_filename, root_buffer, root_buffer_size))
+		{
+			std::cout << "Failed to read root track" << std::endl;
+			return false;
+		}
+		std::cout << "Root track read" << std::endl;
+
+		error_result root_result = compress_track_list(allocator, raw_root_track_list, settings, root_out_compressed_tracks, stats);
+		if (root_out_compressed_tracks == nullptr)
+		{
+			std::cout << "Failed to compress root anim: " << root_result.c_str() << std::endl;
+			return false;
+		}
+		std::cout << "Compressed root track" << std::endl;
+	}
 
 	char* out_name;
 	char* suffix_outanim = strstr(filename, ".outanim");
@@ -348,13 +405,21 @@ bool compress(char* filename)
 
 	//BINA/DATA header
 	unsigned int num = 0;
+	unsigned int filesize = 0;
 	wf.write("BINA210L", 8);
-	num = out_compressed_tracks->get_size() + 0x80 + 0x10 - out_compressed_tracks->get_size() % 0x10 + 0xC;;
-	wf.write((char*)&num, 0x4);
+	if (root == true)
+	{
+		uint32_t mainsize = out_compressed_tracks->get_size() + 0x10 - out_compressed_tracks->get_size() % 0x10;
+		uint32_t rootsize = root_out_compressed_tracks->get_size() + 4 - root_out_compressed_tracks->get_size() % 4;
+		filesize = 0x80 + mainsize + rootsize + 4;
+	}
+	else
+		filesize = 0x80 + out_compressed_tracks->get_size() + 4 - out_compressed_tracks->get_size() % 4 + 4;
+	wf.write((char*)&filesize, 0x4);
 	num = 1;
 	wf.write((char*)&num, 0x4);
 	wf.write("DATA", 4);
-	num = out_compressed_tracks->get_size() + 0x70 + 0x10 - out_compressed_tracks->get_size() % 0x10 + 0xC;;
+	num = filesize - 0x10;
 	wf.write((char*)&num, 0x4);
 	num -= 0x34;
 	wf.write((char*)&num, 0x4);
@@ -389,26 +454,41 @@ bool compress(char* filename)
 	wf.write((char*)&num, 0x4);
 	num = 0;
 	wf.write((char*)&num, 0x4);
-	num = out_compressed_tracks->get_size() + 0x70 + 0x10 - out_compressed_tracks->get_size() % 0x10;
+	if (root == true)
+		num = out_compressed_tracks->get_size() + 0x40 + 0x10 - out_compressed_tracks->get_size() % 0x10;
+	else
+		num = 0;
 	wf.write((char*)&num, 0x4);
 	num = 0;
 	wf.write((char*)&num, 0x4);
 	wf.write((char*)&num, 0x4);
 	wf.write((char*)&num, 0x4);
+
+	// Compressed bone track
 	wf.write((char*)out_compressed_tracks, out_compressed_tracks->get_size());
 	num = 0;
-	for (unsigned int i = 0; i < 0x10 - out_compressed_tracks->get_size() % 0x10; i++)
-		wf.write((char*)&num, 1);
-	num = 0xFFFFFFFF;
-	wf.write((char*)&num, 0x4);
-	num = 0;
-	wf.write((char*)&num, 0x4);
-	num = 0x00424644;
-	wf.write((char*)&num, 0x4);
-	wf.close();
-	
-	std::cout << "Wrote file" << std::endl;
+	if (root == true)
+		{
+		for (unsigned int i = 0; i < 0x10 - out_compressed_tracks->get_size() % 0x10; i++)
+			wf.write((char*)&num, 1);
 
+		// Compressed root track
+		wf.write((char*)root_out_compressed_tracks, root_out_compressed_tracks->get_size());
+		for (unsigned int i = 0; i < 4 - root_out_compressed_tracks->get_size() % 4; i++)
+			wf.write((char*)&num, 1);
+		num = 0x00424644;
+		wf.write((char*)&num, 0x4);
+		}
+
+	else
+		{
+		for (unsigned int i = 0; i < 4 - out_compressed_tracks->get_size() % 4; i++)
+			wf.write((char*)&num, 1);
+		num = 0x00004644;
+		wf.write((char*)&num, 0x4);
+		}
+	wf.close();
+	std::cout << "Wrote file" << std::endl;
 	return true;
 }
 #pragma optimize("", on) 
@@ -434,6 +514,8 @@ int main(int argc, char* argv[])
 		if (!decompress(argv[1], 0x70))
 			return 1;
 	}
+
+
 	else if (!strcmp(dot, ".outanim"))
 	{
 		if (!compress(argv[1]))
