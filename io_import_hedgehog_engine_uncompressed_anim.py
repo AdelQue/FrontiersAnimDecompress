@@ -240,46 +240,48 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
             Filename = os.path.basename(animfile.name)
             RootFilename = Filename.rsplit(".", 1)
             RootFilename = RootFilename[0] + ".root." + RootFilename[1]
-            CurRootFile = open(os.path.join(os.path.dirname(self.filepath), RootFilename),"rb")
-            Bone = Arm.pose.bones[0]
-            if Bone.name != "Reference":
-                raise ValueError("Reference bone should be the only root bone")
-                
-            for x in range(FrameCount): 
-                CurRootFile.seek(0xC+0x30*x)
-                Scene.frame_set(x)
+            
+            if RootFilename in os.listdir(os.path.dirname(self.filepath) + "\\"):
+                CurRootFile = open(os.path.join(os.path.dirname(self.filepath), RootFilename),"rb")
+                Bone = Arm.pose.bones[0]
+                if Bone.name != "Reference":
+                    raise ValueError("Reference bone should be the only root bone")
+                    
+                for x in range(FrameCount): 
+                    CurRootFile.seek(0xC+0x30*x)
+                    Scene.frame_set(x)
 
-                tmpQuat = struct.unpack('<ffff', CurRootFile.read(0x10))
-                tmpPos = struct.unpack('<fff', CurRootFile.read(0xC))
-                tmpFloat = struct.unpack('<f', CurRootFile.read(0x4))
-                tmpScl = struct.unpack('<fff', CurRootFile.read(0xC))
-                CurRootFile.read(4)
+                    tmpQuat = struct.unpack('<ffff', CurRootFile.read(0x10))
+                    tmpPos = struct.unpack('<fff', CurRootFile.read(0xC))
+                    tmpFloat = struct.unpack('<f', CurRootFile.read(0x4))
+                    tmpScl = struct.unpack('<fff', CurRootFile.read(0xC))
+                    CurRootFile.read(4)
 
-                if self.use_yx_orientation:
-                    tmpPos = mathutils.Vector((tmpPos[2],tmpPos[0],tmpPos[1]))
-                    tmpQuat = mathutils.Quaternion((tmpQuat[3],tmpQuat[2],tmpQuat[0],tmpQuat[1]))
-                    if tmpScl != (0.0,0.0,0.0):
-                        tmpScl = mathutils.Vector((tmpScl[2],tmpScl[0],tmpScl[1]))
+                    if self.use_yx_orientation:
+                        tmpPos = mathutils.Vector((tmpPos[2],tmpPos[0],tmpPos[1]))
+                        tmpQuat = mathutils.Quaternion((tmpQuat[3],tmpQuat[2],tmpQuat[0],tmpQuat[1]))
+                        if tmpScl != (0.0,0.0,0.0):
+                            tmpScl = mathutils.Vector((tmpScl[2],tmpScl[0],tmpScl[1]))
+                        else:
+                            tmpScl = mathutils.Vector((1.0,1.0,1.0))
                     else:
-                        tmpScl = mathutils.Vector((1.0,1.0,1.0))
-                else:
-                    tmpPos = mathutils.Vector((tmpPos[0],tmpPos[1],tmpPos[2]))
-                    tmpQuat = mathutils.Quaternion((tmpQuat[3],tmpQuat[0],tmpQuat[1],tmpQuat[2]))
-                    if tmpScl != (0.0,0.0,0.0):
-                        tmpScl = mathutils.Vector((tmpScl[0],tmpScl[1],tmpScl[2]))
-                    else:
-                        tmpScl = mathutils.Vector((1.0,1.0,1.0))
+                        tmpPos = mathutils.Vector((tmpPos[0],tmpPos[1],tmpPos[2]))
+                        tmpQuat = mathutils.Quaternion((tmpQuat[3],tmpQuat[0],tmpQuat[1],tmpQuat[2]))
+                        if tmpScl != (0.0,0.0,0.0):
+                            tmpScl = mathutils.Vector((tmpScl[0],tmpScl[1],tmpScl[2]))
+                        else:
+                            tmpScl = mathutils.Vector((1.0,1.0,1.0))
 
-                Bone.rotation_quaternion = Arm.convert_space(pose_bone = Bone, matrix = (mathutils.Quaternion(tmpQuat)).to_matrix().to_4x4(), from_space = 'POSE', to_space = 'LOCAL').to_quaternion()
-                Bone.location = Arm.convert_space(pose_bone = Bone, matrix = (mathutils.Matrix.Translation(tmpPos)), from_space = 'POSE', to_space = 'LOCAL').translation
-                Bone.scale = tmpScl
-                
-                Bone.keyframe_insert('rotation_quaternion')
-                Bone.keyframe_insert('location')
-                Bone.keyframe_insert('scale')
-
-            CurRootFile.close()
-            del CurRootFile   
+                    Bone.rotation_quaternion = Arm.convert_space(pose_bone = Bone, matrix = (mathutils.Quaternion(tmpQuat)).to_matrix().to_4x4(), from_space = 'POSE', to_space = 'LOCAL').to_quaternion()
+                    Bone.location = Arm.convert_space(pose_bone = Bone, matrix = (mathutils.Matrix.Translation(tmpPos)), from_space = 'POSE', to_space = 'LOCAL').translation
+                    Bone.scale = tmpScl
+                    
+                    Bone.keyframe_insert('rotation_quaternion')
+                    Bone.keyframe_insert('location')
+                    Bone.keyframe_insert('scale')
+                    
+                CurRootFile.close()
+                del CurRootFile   
                 
             CurFile.close()
             del CurFile
