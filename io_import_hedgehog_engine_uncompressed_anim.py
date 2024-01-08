@@ -1,11 +1,11 @@
 bl_info = {
     "name": "Hedgehog Engine 2 Decompressed Animation Import",
     "author": "Turk, WistfulHopes, AdelQ",
-    "version": (1, 1, 1),
+    "version": (1, 11, 0),
     "blender": (3, 3, 0),
     "location": "File > Import-Export",
     "description": "A script to import decompressed animations from Hedgehog Engine 2 games",
-    "warning": "TEST FOR ROOT MOTION IMPORT",
+    "warning": "",
     "category": "Import-Export",
 }
 import bpy
@@ -66,7 +66,7 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
         uiSceneBox = layout.box()
         uiSceneBox.label(text="Animation Settings",icon='ACTION')
         uiSceneRowLoop = uiSceneBox.row()
-        uiSceneRowLoop.label(text="Fix Loop:")
+        uiSceneRowLoop.label(text="Fix Loop (not working):")
         uiSceneRowLoop.prop(self, "loop_anim", text="")
 
         uiBoneBox = layout.box()
@@ -93,9 +93,12 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
 
         for animfile in self.files:
             CurFile = open(os.path.join(os.path.dirname(self.filepath), animfile.name),"rb")
+            
+            
             AnimName = os.path.basename(animfile.name)
             for x in [".outanim", ".anm", ".pxd"]:
                 AnimName = AnimName.replace(x, "")
+                
             Arm.animation_data_create()
             action = bpy.data.actions.new(AnimName)
             Arm.animation_data.action = action
@@ -103,8 +106,11 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
             PlayRate = struct.unpack('<f', CurFile.read(0x4))[0]
             FrameCount = int.from_bytes(CurFile.read(4),byteorder='little')
             BoneCount = int.from_bytes(CurFile.read(4),byteorder='little')
-
-            Scene.render.fps = int((FrameCount - 1) / PlayRate)
+            
+            Framerate = (FrameCount - 1) / PlayRate
+            Scene.render.fps = round(Framerate)
+            Scene.render.fps_base = Scene.render.fps / Framerate
+            
             
             loopCheck = False
             if self.loop_anim == "loopYes":
@@ -135,7 +141,7 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
 
                     tmpQuat = struct.unpack('<ffff', CurFile.read(0x10))
                     tmpPos = struct.unpack('<fff', CurFile.read(0xC))
-                    tmpFloat = struct.unpack('<f', CurFile.read(0x4)) #TODO: Figure out what this value actually does. Seems to always be different
+                    tmpFloat = struct.unpack('<f', CurFile.read(0x4))[0] #TODO: Figure out what this value actually does. Seems to always be different
                     tmpScl = struct.unpack('<fff', CurFile.read(0xC))
                     CurFile.read(4) # Always 1.0 as far as I've seen
 
@@ -158,9 +164,8 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
                     BoneMats.update({Bone.name:BoneMat})
 
                     BoneMatNoScale = mathutils.Matrix.LocRotScale(tmpPos, tmpQuat, mathutils.Vector((1.0,1.0,1.0)))
-                    BoneMatsNoScale.update({Bone.name:BoneMatNoScale})
-
-                
+                    BoneMatsNoScale.update({Bone.name:BoneMatNoScale})  
+                    
                 ### APPLY TRANSFORMS ###
                 
                 # Method 1: BFS algorithm to go down the parent hierarchy calculating the unscaled position matrices.
@@ -189,7 +194,7 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
                                 ParentMat = mathutils.Matrix() @ mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'X') @ mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'Z')
                             else:
                                 ParentMat = mathutils.Matrix()
-                            
+                                
                             # Get unscaled transform matrix of parent bone and use that as basis to get the correct position
                             for z in reversed(Bone.parent_recursive):
                                 ParentMat @= BoneMatsNoScale[z.name]
@@ -234,12 +239,10 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
 
                 else:
                     raise TypeError("None or invalid scale correction method.")
-                
             
-            # Add Root Motion
-            Filename = os.path.basename(animfile.name)
-            RootFilename = Filename.rsplit(".", 1)
-            RootFilename = RootFilename[0] + ".root." + RootFilename[1]
+            
+            
+            RootFilename = os.path.basename(animfile.name) + "-root"
             
             if RootFilename in os.listdir(os.path.dirname(self.filepath) + "\\"):
                 CurRootFile = open(os.path.join(os.path.dirname(self.filepath), RootFilename),"rb")
@@ -253,12 +256,12 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
 
                     tmpQuat = struct.unpack('<ffff', CurRootFile.read(0x10))
                     tmpPos = struct.unpack('<fff', CurRootFile.read(0xC))
-                    tmpFloat = struct.unpack('<f', CurRootFile.read(0x4))
+                    tmpFloat = struct.unpack('<f', CurRootFile.read(0x4))[0]
                     tmpScl = struct.unpack('<fff', CurRootFile.read(0xC))
                     CurRootFile.read(4)
 
                     if self.use_yx_orientation:
-                        tmpPos = mathutils.Vector((tmpPos[2],tmpPos[0],tmpPos[1]))
+                        tmpPos = mathutils.Vector((tmpPos[0],tmpPos[1],tmpPos[2]))
                         tmpQuat = mathutils.Quaternion((tmpQuat[3],tmpQuat[2],tmpQuat[0],tmpQuat[1]))
                         if tmpScl != (0.0,0.0,0.0):
                             tmpScl = mathutils.Vector((tmpScl[2],tmpScl[0],tmpScl[1]))
@@ -271,11 +274,12 @@ class HedgeEngineAnimation(bpy.types.Operator, ImportHelper):
                             tmpScl = mathutils.Vector((tmpScl[0],tmpScl[1],tmpScl[2]))
                         else:
                             tmpScl = mathutils.Vector((1.0,1.0,1.0))
-
-                    Bone.rotation_quaternion = Arm.convert_space(pose_bone = Bone, matrix = (mathutils.Quaternion(tmpQuat)).to_matrix().to_4x4(), from_space = 'POSE', to_space = 'LOCAL').to_quaternion()
-                    Bone.location = Arm.convert_space(pose_bone = Bone, matrix = (mathutils.Matrix.Translation(tmpPos)), from_space = 'POSE', to_space = 'LOCAL').translation
-                    Bone.scale = tmpScl
                     
+                    BoneMat = mathutils.Matrix.LocRotScale(tmpPos, tmpQuat, tmpScl)
+                    if self.use_yx_orientation:
+                        BoneMat @= mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'X') @ mathutils.Matrix.Rotation(math.radians(-90.0), 4, 'Z')
+                    
+                    Bone.matrix = BoneMat 
                     Bone.keyframe_insert('rotation_quaternion')
                     Bone.keyframe_insert('location')
                     Bone.keyframe_insert('scale')
