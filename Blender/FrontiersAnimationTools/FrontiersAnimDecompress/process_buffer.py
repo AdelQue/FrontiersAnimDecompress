@@ -1,24 +1,39 @@
-import subprocess
+import bpy
 import io
-
-# TODO
-# Modify FrontiersAnimDecompress to exchange byte data directly with Python
-
-filepath = "C:/Users/adelj/Documents/Blender/FrontiersModding/Tests/BoneRelocTests/chr_sonic@climbing01_r.outanim"
-cmd = "C:\\Users\\adelj\\AppData\\Roaming\\Blender Foundation\\Blender\\4.1\\scripts\\addons\\FrontiersAnimationTools\\FrontiersAnimDecompress\\FrontiersAnimDecompress.exe"
-file = open(filepath, 'rb')
-data = io.BytesIO()
-data.write(file.read())
+import ctypes
 
 
-process = subprocess.Popen(cmd, stdin=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
-process.stdin.write(data.getvalue())
-process.stdin.close()
-process.wait()
+class Compressor:
+    class BufferAndSize(ctypes.Structure):
+        _fields_ = [("data", ctypes.POINTER(ctypes.c_ubyte)),
+                    ("size", ctypes.c_size_t)]
 
-# subprocess.run(cmd, shell=True, input=data.getvalue(), check=True)
+    path = bpy.utils.user_resource('SCRIPTS', path='Addons\\FrontiersAnimationTools\\FrontiersAnimDecompress')
+    name = "FrontiersAnimDecompress.dll"
 
-'''
-process = subprocess.Popen(cmd, stdout=subprocess.PIPE, creationflags=0x08000000)
-process.wait()
-'''
+    def __init__(self):
+        self.dll = ctypes.CDLL(f"{self.path}\\{self.name}")
+        self.dll.decompress.restype = self.BufferAndSize
+        self.dll.compress.restype = self.BufferAndSize
+
+
+def decompress(compressed_buffer):
+    comp = Compressor()
+    if len(compressed_buffer):
+        decompressed_buffer_ptr = comp.dll.decompress(compressed_buffer)
+        decompressed_stream = bytes(decompressed_buffer_ptr.data[:decompressed_buffer_ptr.size])
+        decompressed_buffer = io.BytesIO(decompressed_stream)
+        return decompressed_buffer
+    else:
+        return io.BytesIO()
+
+
+def compress(uncompressed_buffer):
+    comp = Compressor()
+    if len(uncompressed_buffer):
+        compressed_buffer_ptr = comp.dll.compress(uncompressed_buffer)
+        compressed_stream = bytes(compressed_buffer_ptr.data[:compressed_buffer_ptr.size])
+        compressed_buffer = io.BytesIO(compressed_stream)
+        return compressed_buffer
+    else:
+        return io.BytesIO()

@@ -10,16 +10,17 @@ from bpy.props import (BoolProperty,
                        EnumProperty,
                        CollectionProperty
                        )
-# from ..FrontiersAnimDecompress.process_buffer import compress
+from ..FrontiersAnimDecompress.process_buffer import compress
 
 
 class FrontiersAnimExport(bpy.types.Operator, ExportHelper):
-    bl_idname = "custom_export_anim.frontiers_anim"
+    bl_idname = "export_anim.frontiers_anim"
     bl_label = "Export"
+    bl_description = "Exports compressed Sonic Frontiers animation"
     bl_options = {'PRESET', 'UNDO'}
-    filename_ext = ".outanim"
+    filename_ext = ".pxd"
     filter_glob: StringProperty(
-        default="*.outanim",
+        default="*.pxd",
         options={'HIDDEN'},
     )
     filepath: StringProperty(subtype='FILE_PATH', )
@@ -51,6 +52,14 @@ class FrontiersAnimExport(bpy.types.Operator, ExportHelper):
         ui_orientation_row = ui_bone_box.row()
         ui_orientation_row.prop(self, "bool_yx_skel", )
 
+    @classmethod
+    def poll(cls, context):
+        obj = bpy.context.active_object
+        if obj and obj.type == 'ARMATURE':
+            return True
+        else:
+            return False
+
     def execute(self, context):
         arm_active = bpy.context.active_object
         scene_active = bpy.context.scene
@@ -73,16 +82,19 @@ class FrontiersAnimExport(bpy.types.Operator, ExportHelper):
         buffer_root = io.BytesIO()
 
         buffer_main.write(struct.pack('<f', frame_time))
+        buffer_main.write(struct.pack('<f', frame_rate))
         buffer_main.write(struct.pack('<i', frame_count))
         buffer_main.write(struct.pack('<i', bone_count))
-        # buffer_main.write(struct.pack('<i', 0))
 
         if self.bool_root_motion:
             buffer_root.write(struct.pack('<f', frame_time))
+            buffer_root.write(struct.pack('<f', frame_rate))
             buffer_root.write(struct.pack('<i', frame_count))
-            # buffer_root.write(struct.pack('<i', 1))
+            buffer_root.write(struct.pack('<i', 1))
 
         action_active = arm_active.animation_data.action
+
+
         for f in range(frame_count):
             scene_active.frame_set(scene_active.frame_start + f)
 
@@ -95,7 +107,7 @@ class FrontiersAnimExport(bpy.types.Operator, ExportHelper):
                 matrix_map_temp.update({pbone.name: tmp_matrix})
                 scale_map_temp.update({pbone.name: pbone.scale.copy()})  # normal scale is different from matrix scale
 
-            # Negate unscaled parent matrices, write to file with actual scales
+            # Negate unscaled parent matrices, write to buffer with actual scales
             for pbone in arm_active.pose.bones:
                 if pbone.parent:
                     tmp_parent_matrix = matrix_map_temp[pbone.parent.name]
@@ -122,25 +134,81 @@ class FrontiersAnimExport(bpy.types.Operator, ExportHelper):
                     buffer_main.write(struct.pack('<fff', tmp_scale[0], tmp_scale[1], tmp_scale[2]))
                     buffer_main.write(struct.pack('<f', 1.0))
 
-        with open(self.filepath, "wb") as file:
-            file.write(buffer_main.getvalue())
+        main_buffer_compressed = compress(buffer_main.getvalue())
+        root_buffer_compressed = compress(buffer_root.getvalue())
         del buffer_main
         del buffer_root
 
-        # main_buffer_compressed = compress(main_buffer)
-        # del main_buffer
+        with open(self.filepath, "wb") as file:
+            null = 0
+            main_buffer_size = main_buffer_compressed.getbuffer().nbytes
+            root_buffer_size = root_buffer_compressed.getbuffer().nbytes
 
-        # root_buffer_compressed = compress(root_buffer)
-        # del root_buffer
+            if self.bool_root_motion:
+                main_chunk_size = main_buffer_size + 0x10 - main_buffer_size % 0x10
+                root_chunk_size = root_buffer_size + 4 - root_buffer_size % 4
+                file_size = 0x80 + main_chunk_size + root_chunk_size + 4
+            else:
+                file_size = 0x80 + main_buffer_size + 4 - main_buffer_size % 4 + 4
 
+            # BINA
+            bin_magic = bytes('BINA210L', 'ascii')
+            file.write(bin_magic)
+            file.write(struct.pack('<i', file_size))
+            file.write(struct.pack('<i', 1))
+
+            # DATA
+            data_magic = bytes('DATA', 'ascii')
+            file.write(data_magic)
+            file.write(struct.pack('<i', file_size - 0x10))
+            file.write(struct.pack('<i', file_size - 0x10 - 0x34))
+            file.write(struct.pack('<i', 0))
+
+            file.write(struct.pack('<i', 4))
+            file.write(struct.pack('<i', 0x18))
+            file.write(null.to_bytes(24, 'little'))
+
+            # PXAN
+            pxan_magic = bytes('NAXP', 'ascii')
+            file.write(pxan_magic)
+            file.write(struct.pack('<i', 0x200))
+            file.write(struct.pack('<i', 0x800))
+            file.write(struct.pack('<i', 0))
+
+            file.write(struct.pack('<i', 0x18))
+            file.write(struct.pack('<i', 0))
+            file.write(struct.pack('<f', frame_time))
+            file.write(struct.pack('<i', frame_count))
+
+            file.write(struct.pack('<i', bone_count))
+            file.write(struct.pack('<i', 0))
+            file.write(struct.pack('<q', 0x40))
+
+            # Root offset
+            if root_buffer_size:
+                file.write(struct.pack('<q', main_buffer_size + 0x40 + 0x10 - main_buffer_size % 0x10))
+            else:
+                file.write(struct.pack('<q', 0))
+            file.write(struct.pack('<q', 0))
+
+            # Compressed track
+            file.write(main_buffer_compressed.getvalue())
+            if root_buffer_size:
+                file.write(null.to_bytes(0x10 - main_buffer_size % 0x10, 'little'))
+                # Root track
+                file.write(root_buffer_compressed.getvalue())
+                file.write(null.to_bytes(4 - root_buffer_size % 4, 'little'))
+                file.write(struct.pack('<i', 0x00424644))
+            else:
+                file.write(null.to_bytes(4 - main_buffer_size % 4, 'little'))
+                file.write(struct.pack('<i', 0x00004644))
 
         scene_active.frame_current = frame_active
-
         return{'FINISHED'}
 
     def menu_func_export(self, context):
         self.layout.operator(
             FrontiersAnimExport.bl_idname,
-            text="Frontiers Uncompressed Animation (.outanim)",
+            text="Frontiers Compressed Animation (.anm.pxd)",
             icon='ACTION'
         )

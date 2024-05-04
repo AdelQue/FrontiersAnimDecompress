@@ -10,8 +10,7 @@ from bpy.props import (BoolProperty,
                        EnumProperty,
                        CollectionProperty
                        )
-# from ..FrontiersAnimDecompress.process_buffer import decompress
-
+from ..FrontiersAnimDecompress.process_buffer import decompress
 
 def get_matrix_map_global(obj, matrix_map_local, scale_map):
     # Get global matrix of raw bone tracks, which are relative to parent track's local space.
@@ -78,12 +77,13 @@ def set_pose_matrices_global(obj, matrix_map_global, frame, keyframe_rules):
 
 
 class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
-    bl_idname = "custom_import_anim.frontiers_anim"
+    bl_idname = "import_anim.frontiers_anim"
     bl_label = "Import"
+    bl_description = "Imports compressed Sonic Frontiers animation"
     bl_options = {'PRESET', 'UNDO'}
-    filename_ext = ".outanim"
+    filename_ext = ".pxd"
     filter_glob: StringProperty(
-        default="*.outanim",
+        default="*.pxd",
         options={'HIDDEN'},
     )
     filepath: StringProperty(subtype='FILE_PATH', )
@@ -116,7 +116,6 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
     def __init__(self):
         self.bool_skel_conv = False
         self.bool_is_loop = False
-        self.outanim_version = 0
 
     def draw(self, context):
         layout = self.layout
@@ -136,43 +135,70 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
         ui_orientation_row = ui_bone_box.row()
         ui_orientation_row.prop(self, "bool_yx_skel", )
 
+    @classmethod
+    def poll(cls, context):
+        obj = bpy.context.active_object
+        if obj and obj.type == 'ARMATURE':
+            return True
+        else:
+            return False
+
     def execute(self, context):
         arm_active = bpy.context.active_object
-        scene_active = bpy.context.scene
-
         if not arm_active:
-            raise ValueError("No active object. Please select an armature as your active object.")
+            self.report({'INFO'}, f"No active armature. Please select an armature.")
+            return {'CANCELLED'}
         if arm_active.type != 'ARMATURE':
-            raise TypeError(f"Active object \"{arm_active.name}\" is not an armature. Please select an armature.")
+            self.report({'INFO'}, f"Active object \"{arm_active.name}\" is not an armature. Please select an armature.")
+            return {'CANCELLED'}
 
+        bone_count = len(arm_active.pose.bones)
+        scene_active = bpy.context.scene
         for bone in arm_active.data.bones:
             bone.inherit_scale = 'ALIGNED'
 
-        for file in self.files:
+        print("Importing animations...")
+        for i, file in enumerate(self.files):
+            # print(f"{i + 1} / {len(self.files)}")
             anim_file = open(os.path.join(os.path.dirname(self.filepath), file.name), "rb")
+            if not self.anim_check(anim_file):
+                return {'CANCELLED'}
 
-            # TODO
-            # anim_file.seek(main_offset, 0)
-            # main_buffer_compressed = anim_file.read(main_buffer_length)
-            # main_buffer = decompress(main_buffer_compressed)
-            # del main_buffer_compressed
+            anim_file.seek(4, 0)
+            file_size = int.from_bytes(anim_file.read(4), byteorder='little')
+            anim_file.seek(0x58, 0)
 
-            # anim_file.seek(root_offset, 0)
-            # root_buffer_compressed = anim_file.read(root_buffer_length)
-            # root_buffer = decompress(root_buffer_compressed)
-            # del root_buffer_compressed
+            anim_file.seek(0x80, 0)
+            main_buffer_length = int.from_bytes(anim_file.read(4), byteorder='little')
+            anim_file.seek(0x80, 0)
+            main_buffer_compressed = anim_file.read(main_buffer_length)
+            main_buffer = decompress(main_buffer_compressed)
+            del main_buffer_compressed
 
-            frame_time = struct.unpack('<f', anim_file.read(0x4))[0]
-            frame_count = int.from_bytes(anim_file.read(4), byteorder='little')
-            bone_count = int.from_bytes(anim_file.read(4), byteorder='little')
+            anim_file.seek(0x70, 0)
+            root_buffer_offset = int.from_bytes(anim_file.read(8), byteorder='little')
 
-            if len(arm_active.pose.bones) < bone_count:
-                raise ValueError(
-                    f"Active object's armature \"{arm_active.data.name}\" has less bones than file's animation tracks")
-            elif len(arm_active.pose.bones) > bone_count:
-                print(
-                    f"Active object's armature \"{arm_active.data.name}\" has more bones than file's animation tracks. "
-                    f"Animation exports will need modified or new skeleton."
+            # Animations compressed with old FrontiersAnimDecompress.exe had non-existent root chunk offsets beyond EOF
+            if 0 < root_buffer_offset < file_size:
+                anim_file.seek(root_buffer_offset + 0x40, 0)
+                root_buffer_length = int.from_bytes(anim_file.read(4), byteorder='little')
+                anim_file.seek(root_buffer_offset + 0x40, 0)
+                root_buffer_compressed = anim_file.read(root_buffer_length)
+                root_buffer = decompress(root_buffer_compressed)
+                del root_buffer_compressed
+
+            anim_file.close()
+            del anim_file
+
+            frame_time = struct.unpack('<f', main_buffer.read(0x4))[0]
+            frame_rate = struct.unpack('<f', main_buffer.read(0x4))[0]
+            frame_count = int.from_bytes(main_buffer.read(4), byteorder='little')
+            track_count = int.from_bytes(main_buffer.read(4), byteorder='little')
+
+            if bone_count != track_count:
+                self.report(
+                    {'WARNING'},
+                    f"Bone count of \"{arm_active.data.name}\" ({bone_count}) does not match track count of \"{file.name}\" ({track_count}). Results may not turn out as expected."
                 )
 
             anim_name = file.name
@@ -193,7 +219,7 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
             action_active = bpy.data.actions.new(anim_name)
             arm_active.animation_data.action = action_active
 
-            frame_rate = (frame_count - 1) / frame_time
+            # frame_rate = (frame_count - 1) / frame_time
             scene_active.render.fps = int(round(frame_rate))
             scene_active.render.fps_base = scene_active.render.fps / frame_rate
             scene_active.frame_start = 0
@@ -205,53 +231,94 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
             if self.bool_is_loop:
                 action_active.use_cyclic = True
 
-            action_active["outanim_export"] = True
-            action_active["outanim_fps"] = frame_rate
+            action_active["pxd_export"] = True
+            action_active["pxd_fps"] = frame_rate
 
             for frame in range(frame_count):
                 if self.bool_is_loop and frame == frame_count - 1:
-                    anim_file.seek(0xC)
+                    main_buffer.seek(0x10)
                 else:
-                    anim_file.seek(0xC + 0x30 * bone_count * frame)
+                    main_buffer.seek(0x10 + 0x30 * track_count * frame)
 
                 matrix_map_local = {}
                 scale_map = {}
 
                 for i in range(bone_count):
                     pbone = arm_active.pose.bones[i]
-                    if self.bool_yx_skel:
-                        qz, qx, qy, qw = struct.unpack('<ffff', anim_file.read(0x10))
-                        pz, px, py = struct.unpack('<fff', anim_file.read(0xC))
-                        anim_file.read(4)  # Float: Bone length
-                        sz, sx, sy = struct.unpack('<fff', anim_file.read(0xC))
-                        anim_file.read(4)  # Float: 1.0
+                    if i not in range(track_count):
+                        matrix_map_local.update({pbone.name: mathutils.Matrix()})
+                        scale_map.update({pbone.name: mathutils.Vector((1.0, 1.0, 1.0))})
                     else:
-                        qx, qy, qz, qw = struct.unpack('<ffff', anim_file.read(0x10))
-                        px, py, pz = struct.unpack('<fff', anim_file.read(0xC))
-                        anim_file.read(4)  # Float: Bone length
-                        sx, sy, sz = struct.unpack('<fff', anim_file.read(0xC))
-                        anim_file.read(4)  # Float: 1.0
+                        if self.bool_yx_skel:
+                            qz, qx, qy, qw = struct.unpack('<ffff', main_buffer.read(0x10))
+                            pz, px, py = struct.unpack('<fff', main_buffer.read(0xC))
+                            main_buffer.read(4)  # Float: Bone length
+                            sz, sx, sy = struct.unpack('<fff', main_buffer.read(0xC))
+                            main_buffer.read(4)  # Float: 1.0
+                        else:
+                            qx, qy, qz, qw = struct.unpack('<ffff', main_buffer.read(0x10))
+                            px, py, pz = struct.unpack('<fff', main_buffer.read(0xC))
+                            main_buffer.read(4)  # Float: Bone length
+                            sx, sy, sz = struct.unpack('<fff', main_buffer.read(0xC))
+                            main_buffer.read(4)  # Float: 1.0
 
-                    # Keep location and rotation separate from scale in order to calculate proper global matrix
-                    tmp_loc = mathutils.Vector((px, py, pz))
-                    tmp_rot = mathutils.Quaternion((qw, qx, qy, qz))
-                    matrix = mathutils.Matrix.LocRotScale(tmp_loc, tmp_rot, mathutils.Vector((1.0, 1.0, 1.0)))
-                    matrix_map_local.update({pbone.name: matrix})
+                        # Keep location and rotation separate from scale in order to calculate proper global matrix
+                        tmp_loc = mathutils.Vector((px, py, pz))
+                        tmp_rot = mathutils.Quaternion((qw, qx, qy, qz))
+                        matrix = mathutils.Matrix.LocRotScale(tmp_loc, tmp_rot, mathutils.Vector((1.0, 1.0, 1.0)))
+                        matrix_map_local.update({pbone.name: matrix})
 
-                    if (sx, sy, sz) != (0.0, 0.0, 0.0):
-                        tmp_scale = mathutils.Vector((sx, sy, sz))
-                    else:
-                        tmp_scale = mathutils.Vector((1.0, 1.0, 1.0))
-                    scale_map.update({pbone.name: tmp_scale})
+                        if (sx, sy, sz) != (0.0, 0.0, 0.0):
+                            tmp_scale = mathutils.Vector((sx, sy, sz))
+                        else:
+                            tmp_scale = mathutils.Vector((1.0, 1.0, 1.0))
+                        scale_map.update({pbone.name: tmp_scale})
 
                 matrix_map_global = get_matrix_map_global(arm_active, matrix_map_local, scale_map)
                 set_pose_matrices_global(arm_active, matrix_map_global, frame, keyframe_rules)
-            del anim_file
+
         return {'FINISHED'}
+
+    def anim_check(self, file):
+        file.seek(0x40, 0)
+        magic = file.read(4)
+        version = int.from_bytes(file.read(4), byteorder='little')
+        compressed = int.from_bytes(file.read(4), byteorder='little')
+        if magic != b'NAXP':
+            self.report({'ERROR'}, "Not a valid PXD animation file")
+            return False
+        if version != 512:
+            self.report({'ERROR'}, "Wrong PXD version")
+            return False
+        if compressed != 2048:
+            self.report({'ERROR'}, "PXD animation is uncompressed")
+            return False
+        file.seek(0, 0)
+        return True
 
     def menu_func_import(self, context):
         self.layout.operator(
             FrontiersAnimImport.bl_idname,
-            text="Frontiers Uncompressed Animation (.outanim)",
-            icon='ACTION'
+            text="Frontiers Compressed Animation (.anm.pxd)",
+            icon='ACTION',
         )
+
+# Untested function, theoretical scribble for numpy index lookup for parents
+'''
+def get_parent(obj):
+    matrix_map = []
+    matrix_map_final = mathutils.Matrix():
+
+    def get_map_recursive(bone, mat_map, mat_map_final):
+        if bone.parent:
+            mat_map.append(bone.matrix.copy())
+            get_map_recursive(bone.parent, mat_map, mat_map_final)
+        else:
+            for mat in mat_map:
+                mat_map_final[bone.name] @= mat
+
+    for pbone in obj.pose.bones:
+        get_map_recursive(pbone, matrix_map, matrix_map_final)
+
+    return matrix_map_final
+'''

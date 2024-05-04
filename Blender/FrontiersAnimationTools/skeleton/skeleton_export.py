@@ -1,12 +1,7 @@
-import sys
 import bpy
-import bmesh
-import os
 import io
 import struct
-import math
 import mathutils
-import binascii
 from bpy.props import (BoolProperty,
                        FloatProperty,
                        StringProperty,
@@ -14,11 +9,6 @@ from bpy.props import (BoolProperty,
                        CollectionProperty
                        )
 from bpy_extras.io_utils import ExportHelper
-
-
-def utils_set_mode(mode):
-    if bpy.ops.object.mode_set.poll():
-        bpy.ops.object.mode_set(mode=mode, toggle=False)
 
 
 def offset_table(offset):
@@ -62,9 +52,10 @@ class MoveArray:
             self.transform.append(BoneTransform(Arm.pose.bones[x].bone))
 
 
-class FrontiersSkeletonExport(bpy.types.Operator, ExportHelper):
+class HedgehogSkeletonExport(bpy.types.Operator, ExportHelper):
     bl_idname = "custom_export_skeleton.frontiers_skel"
     bl_label = "export"
+    bl_description = "Exports PXD skeleton for Hedgehog Engine 2 games"
     filename_ext = ".pxd"
     filter_glob: StringProperty(
         default="*.pxd",
@@ -85,14 +76,24 @@ class FrontiersSkeletonExport(bpy.types.Operator, ExportHelper):
         uiBoneBox.label(text="Armature Settings", icon="ARMATURE_DATA")
         uiBoneBox.prop(self, "use_yx_orientation")
 
+    @classmethod
+    def poll(cls, context):
+        obj = bpy.context.active_object
+        if obj and obj.type == 'ARMATURE':
+            return True
+        else:
+            return False
+
     def execute(self, context):
         Arm = bpy.context.active_object
-        Scene = bpy.context.scene
         if not Arm:
-            raise ValueError("No active object. Please select an armature as your active object.")
+            self.report({'INFO'}, f"No active armature. Please select an armature.")
+            return {'CANCELLED'}
         if Arm.type != 'ARMATURE':
-            raise TypeError(f"Active object \"{Arm.name}\" is not an armature. Please select an armature.")
+            self.report({'INFO'}, f"Active object \"{Arm.name}\" is not an armature. Please select an armature.")
+            return {'CANCELLED'}
 
+        Scene = bpy.context.scene
         buffer = io.BytesIO()
 
         magic = bytes('KSXP', 'ascii')
@@ -232,7 +233,7 @@ class FrontiersSkeletonExport(bpy.types.Operator, ExportHelper):
 
     def menu_func_export(self, context):
         self.layout.operator(
-            FrontiersSkeletonExport.bl_idname,
-            text="Frontiers Skeleton (.skl.pxd)",
-            icon='ARMATURE_DATA'
+            HedgehogSkeletonExport.bl_idname,
+            text="Hedgehog Engine 2 Skeleton (.skl.pxd)",
+            icon='OUTLINER_OB_ARMATURE'
         )
