@@ -1,14 +1,16 @@
+# Original skeleton export script by WistfulHopes
+# https://github.com/WistfulHopes/FrontiersAnimDecompress/
+
 import bpy
 import io
 import struct
 import mathutils
+from bpy_extras.io_utils import ExportHelper
 from bpy.props import (BoolProperty,
-                       FloatProperty,
                        StringProperty,
-                       EnumProperty,
                        CollectionProperty
                        )
-from bpy_extras.io_utils import ExportHelper
+
 
 
 def offset_table(offset):
@@ -30,32 +32,33 @@ def offset_table(offset):
 
 
 class BoneTransform:
-    def __init__(self, Bone):
-        Mat = Bone.matrix_local
-        if Bone.parent:
-            Mat = Bone.parent.matrix_local.inverted() @ Bone.matrix_local
-        self.pos = Mat.translation
-        self.rot = Mat.to_quaternion()
+    def __init__(self, pbone):
+        mat = pbone.matrix_local
+        if pbone.parent:
+            mat = pbone.parent.matrix_local.inverted() @ pbone.matrix_local
+        self.pos = mat.translation
+        self.rot = mat.to_quaternion()
 
 
 class MoveArray:
-    def __init__(self, Arm):
+    def __init__(self, arm_obj):
         self.parent_indices = []
         self.name = []
         self.transform = []
-        for x in range(len(Arm.pose.bones)):
-            if (Arm.pose.bones[x].parent):
-                self.parent_indices.append(Arm.pose.bones.find(Arm.pose.bones[x].parent.name))
+        for x in range(len(arm_obj.pose.bones)):
+            if (arm_obj.pose.bones[x].parent):
+                self.parent_indices.append(arm_obj.pose.bones.find(arm_obj.pose.bones[x].parent.name))
             else:
                 self.parent_indices.append(65535)
-            self.name.append(bytes(Arm.pose.bones[x].name, 'ascii') + b'\x00')
-            self.transform.append(BoneTransform(Arm.pose.bones[x].bone))
+            self.name.append(bytes(arm_obj.pose.bones[x].name, 'ascii') + b'\x00')
+            self.transform.append(BoneTransform(arm_obj.pose.bones[x].bone))
 
 
 class HedgehogSkeletonExport(bpy.types.Operator, ExportHelper):
-    bl_idname = "custom_export_skeleton.frontiers_skel"
-    bl_label = "export"
+    bl_idname = "export_skeleton.frontiers_skel"
+    bl_label = "Export"
     bl_description = "Exports PXD skeleton for Hedgehog Engine 2 games"
+    bl_options = {'PRESET', 'UNDO'}
     filename_ext = ".pxd"
     filter_glob: StringProperty(
         default="*.pxd",
@@ -65,16 +68,16 @@ class HedgehogSkeletonExport(bpy.types.Operator, ExportHelper):
     files: CollectionProperty(type=bpy.types.PropertyGroup)
 
     use_yx_orientation: BoolProperty(
-        name="Use YX Bone Orientation",
+        name="Convert from YX Bone Orientation",
         description="If your skeleton was imported from XZ to YX to function better in Blender, use this option to switch bones back from YX to XZ (important for in-game IK)",
         default=False,
     )
 
     def draw(self, context):
         layout = self.layout
-        uiBoneBox = layout.box()
-        uiBoneBox.label(text="Armature Settings", icon="ARMATURE_DATA")
-        uiBoneBox.prop(self, "use_yx_orientation")
+        ui_bone_box = layout.box()
+        ui_bone_box.label(text="Armature Settings", icon="ARMATURE_DATA")
+        ui_bone_box.prop(self, "use_yx_orientation")
 
     @classmethod
     def poll(cls, context):
@@ -85,99 +88,99 @@ class HedgehogSkeletonExport(bpy.types.Operator, ExportHelper):
             return False
 
     def execute(self, context):
-        Arm = bpy.context.active_object
-        if not Arm:
+        arm_active = bpy.context.active_object
+        if not arm_active:
             self.report({'INFO'}, f"No active armature. Please select an armature.")
             return {'CANCELLED'}
-        if Arm.type != 'ARMATURE':
-            self.report({'INFO'}, f"Active object \"{Arm.name}\" is not an armature. Please select an armature.")
+        if arm_active.type != 'ARMATURE':
+            self.report({'INFO'}, f"Active object \"{arm_active.name}\" is not an armature. Please select an armature.")
             return {'CANCELLED'}
 
-        Scene = bpy.context.scene
         buffer = io.BytesIO()
 
         magic = bytes('KSXP', 'ascii')
         buffer.write(magic)
         buffer.write(struct.pack('<i', 512))
-        Array = MoveArray(Arm)
+        array = MoveArray(arm_active)
 
-        ParentOffset = 104
-        Null = 0
+        parent_offset = 104
+        null = 0
 
-        buffer.write(ParentOffset.to_bytes(8, 'little'))
-        buffer.write(len(Arm.pose.bones).to_bytes(8, 'little'))
-        buffer.write(len(Arm.pose.bones).to_bytes(8, 'little'))
-        buffer.write(Null.to_bytes(8, 'little'))
+        buffer.write(parent_offset.to_bytes(8, 'little'))
+        buffer.write(len(arm_active.pose.bones).to_bytes(8, 'little'))
+        buffer.write(len(arm_active.pose.bones).to_bytes(8, 'little'))
+        buffer.write(null.to_bytes(8, 'little'))
 
-        NameOffset = ParentOffset + (len(Arm.pose.bones) + 1) * 2
-        if NameOffset % 0x10 != 0:
-            NameOffset += 0x10 - NameOffset % 0x10
+        name_offset = parent_offset + (len(arm_active.pose.bones) + 1) * 2
+        if name_offset % 0x10 != 0:
+            name_offset += 0x10 - name_offset % 0x10
 
-        buffer.write(NameOffset.to_bytes(8, 'little'))
-        buffer.write(len(Arm.pose.bones).to_bytes(8, 'little'))
-        buffer.write(len(Arm.pose.bones).to_bytes(8, 'little'))
-        buffer.write(Null.to_bytes(8, 'little'))
+        buffer.write(name_offset.to_bytes(8, 'little'))
+        buffer.write(len(arm_active.pose.bones).to_bytes(8, 'little'))
+        buffer.write(len(arm_active.pose.bones).to_bytes(8, 'little'))
+        buffer.write(null.to_bytes(8, 'little'))
 
-        MatrixOffset = NameOffset + len(Arm.pose.bones) * 0x10
+        matrix_offset = name_offset + len(arm_active.pose.bones) * 0x10
 
-        buffer.write(MatrixOffset.to_bytes(8, 'little'))
-        buffer.write(len(Arm.pose.bones).to_bytes(8, 'little'))
-        buffer.write(len(Arm.pose.bones).to_bytes(8, 'little'))
-        buffer.write(Null.to_bytes(8, 'little'))
+        buffer.write(matrix_offset.to_bytes(8, 'little'))
+        buffer.write(len(arm_active.pose.bones).to_bytes(8, 'little'))
+        buffer.write(len(arm_active.pose.bones).to_bytes(8, 'little'))
+        buffer.write(null.to_bytes(8, 'little'))
 
-        for x in range(len(Arm.pose.bones)):
-            ParentIndex = Array.parent_indices[x].to_bytes(2, 'little')
-            buffer.write(ParentIndex)
+        for x in range(len(arm_active.pose.bones)):
+            parent_index = array.parent_indices[x].to_bytes(2, 'little')
+            buffer.write(parent_index)
 
         if buffer.tell() % 0x10 != 0:
             for x in range(0x10 - buffer.tell() % 0x10):
-                buffer.write(Null.to_bytes(1, 'little'))
+                buffer.write(null.to_bytes(1, 'little'))
 
-        NameDataOffset = MatrixOffset + len(Arm.pose.bones) * 0x30
+        name_data_offset = matrix_offset + len(arm_active.pose.bones) * 0x30
 
-        for x in range(len(Arm.pose.bones)):
-            buffer.write(NameDataOffset.to_bytes(16, 'little'))
-            NameDataOffset += len(Array.name[x])
+        for x in range(len(arm_active.pose.bones)):
+            buffer.write(name_data_offset.to_bytes(16, 'little'))
+            name_data_offset += len(array.name[x])
 
-        for x in range(len(Arm.pose.bones)):
+        for x in range(len(arm_active.pose.bones)):
             if self.use_yx_orientation:
-                if not Arm.pose.bones[x].parent:
-                    Array.transform[x].rot @= mathutils.Quaternion((0.5, 0.5, 0.5, 0.5))
-                buffer.write(struct.pack('<f', Array.transform[x].pos[1]))
-                buffer.write(struct.pack('<f', Array.transform[x].pos[2]))
-                buffer.write(struct.pack('<f', Array.transform[x].pos[0]))
+                if not arm_active.pose.bones[x].parent:
+                    # Identity matrix to swap YX to XZ
+                    array.transform[x].rot @= mathutils.Quaternion((0.5, 0.5, 0.5, 0.5))
+                buffer.write(struct.pack('<f', array.transform[x].pos[1]))
+                buffer.write(struct.pack('<f', array.transform[x].pos[2]))
+                buffer.write(struct.pack('<f', array.transform[x].pos[0]))
                 buffer.write(struct.pack('<f', 0))
-                buffer.write(struct.pack('<f', Array.transform[x].rot[2]))
-                buffer.write(struct.pack('<f', Array.transform[x].rot[3]))
-                buffer.write(struct.pack('<f', Array.transform[x].rot[1]))
-                buffer.write(struct.pack('<f', Array.transform[x].rot[0]))
+                buffer.write(struct.pack('<f', array.transform[x].rot[2]))
+                buffer.write(struct.pack('<f', array.transform[x].rot[3]))
+                buffer.write(struct.pack('<f', array.transform[x].rot[1]))
+                buffer.write(struct.pack('<f', array.transform[x].rot[0]))
             else:
-                buffer.write(struct.pack('<f', Array.transform[x].pos[0]))
-                buffer.write(struct.pack('<f', Array.transform[x].pos[1]))
-                buffer.write(struct.pack('<f', Array.transform[x].pos[2]))
+                buffer.write(struct.pack('<f', array.transform[x].pos[0]))
+                buffer.write(struct.pack('<f', array.transform[x].pos[1]))
+                buffer.write(struct.pack('<f', array.transform[x].pos[2]))
                 buffer.write(struct.pack('<f', 0))
-                buffer.write(struct.pack('<f', Array.transform[x].rot[1]))
-                buffer.write(struct.pack('<f', Array.transform[x].rot[2]))
-                buffer.write(struct.pack('<f', Array.transform[x].rot[3]))
-                buffer.write(struct.pack('<f', Array.transform[x].rot[0]))
+                buffer.write(struct.pack('<f', array.transform[x].rot[1]))
+                buffer.write(struct.pack('<f', array.transform[x].rot[2]))
+                buffer.write(struct.pack('<f', array.transform[x].rot[3]))
+                buffer.write(struct.pack('<f', array.transform[x].rot[0]))
 
             buffer.write(struct.pack('<f', 1))
             buffer.write(struct.pack('<f', 1))
             buffer.write(struct.pack('<f', 1))
             buffer.write(struct.pack('<f', 0))
 
-        StringTableSize = 0
+        string_table_size = 0
 
-        for x in range(len(Arm.pose.bones)):
-            buffer.write(Array.name[x])
-            StringTableSize += len(Array.name[x])
+        for x in range(len(arm_active.pose.bones)):
+            buffer.write(array.name[x])
+            string_table_size += len(array.name[x])
 
         if buffer.tell() % 4 != 0:
             for x in range(4 - buffer.tell() % 4):
-                buffer.write(Null.to_bytes(1, 'little'))
-                StringTableSize += 1
+                buffer.write(null.to_bytes(1, 'little'))
+                string_table_size += 1
 
-        OffsetTableSize = 0
+        offset_table_size = 0
 
         bit = 66
         buffer.write(bit.to_bytes(1, 'little'))
@@ -185,49 +188,49 @@ class HedgehogSkeletonExport(bpy.types.Operator, ExportHelper):
         buffer.write(bit.to_bytes(1, 'little'))
         buffer.write(bit.to_bytes(1, 'little'))
 
-        OffsetTableSize += 3
+        offset_table_size += 3
 
-        name_offset_bits = offset_table(NameOffset - ParentOffset + 0x20)
+        name_offset_bits = offset_table(name_offset - parent_offset + 0x20)
         name_offset_buffer = bytearray()
         index = 0
         while index < len(name_offset_bits):
             name_offset_buffer.append(int(name_offset_bits[index:index + 8], 2))
             index += 8
 
-        OffsetTableSize += len(name_offset_buffer)
+        offset_table_size += len(name_offset_buffer)
 
         buffer.write(name_offset_buffer)
 
         inbyte = 68
-        for x in range(len(Arm.pose.bones) - 1):
+        for x in range(len(arm_active.pose.bones) - 1):
             buffer.write(inbyte.to_bytes(1, 'little'))
-            OffsetTableSize += 1
+            offset_table_size += 1
 
-        buffer.write(Null.to_bytes(1, 'little'))
-        OffsetTableSize += 1
+        buffer.write(null.to_bytes(1, 'little'))
+        offset_table_size += 1
 
         if buffer.tell() % 4 != 0:
             for x in range(4 - buffer.tell() % 4):
-                buffer.write(Null.to_bytes(1, 'little'))
-                OffsetTableSize += 1
+                buffer.write(null.to_bytes(1, 'little'))
+                offset_table_size += 1
 
-        with open(self.filepath, "wb") as CurFile:
+        with open(self.filepath, "wb") as file:
             buffer_size = buffer.getbuffer().nbytes
 
             bin_magic = bytes('BINA210L', 'ascii')
-            CurFile.write(bin_magic)
-            CurFile.write(struct.pack('<i', buffer_size + 0x40))
-            CurFile.write(struct.pack('<i', 1))
+            file.write(bin_magic)
+            file.write(struct.pack('<i', buffer_size + 0x40))
+            file.write(struct.pack('<i', 1))
 
             data_magic = bytes('DATA', 'ascii')
-            CurFile.write(data_magic)
-            CurFile.write(struct.pack('<i', buffer_size + 0x30))
-            CurFile.write(struct.pack('<i', MatrixOffset + len(Arm.pose.bones) * 0x30))
-            CurFile.write(struct.pack('<i', StringTableSize))
-            CurFile.write(struct.pack('<i', OffsetTableSize))
-            CurFile.write(struct.pack('<i', 0x18))
-            CurFile.write(Null.to_bytes(24, 'little'))
-            CurFile.write(buffer.getvalue())
+            file.write(data_magic)
+            file.write(struct.pack('<i', buffer_size + 0x30))
+            file.write(struct.pack('<i', matrix_offset + len(arm_active.pose.bones) * 0x30))
+            file.write(struct.pack('<i', string_table_size))
+            file.write(struct.pack('<i', offset_table_size))
+            file.write(struct.pack('<i', 0x18))
+            file.write(null.to_bytes(24, 'little'))
+            file.write(buffer.getvalue())
 
         return {'FINISHED'}
 

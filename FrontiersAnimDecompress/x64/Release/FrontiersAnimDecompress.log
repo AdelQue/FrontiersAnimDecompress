@@ -1,8 +1,0 @@
-﻿  FrontiersAnimDecompress.cpp
-     Creating library C:\Github\FrontiersAnimDecompress\x64\Release\FrontiersAnimDecompress.lib and object C:\Github\FrontiersAnimDecompress\x64\Release\FrontiersAnimDecompress.exp
-  Generating code
-  78 of 1354 functions ( 5.8%) were compiled, the rest were copied from previous compilation.
-    0 functions were new in current compilation
-    15 functions had inline decision re-evaluated but remain unchanged
-  Finished generating code
-  FrontiersAnimDecompress.vcxproj -> C:\Github\FrontiersAnimDecompress\x64\Release\FrontiersAnimDecompress.dll

@@ -104,8 +104,6 @@ extern "C" __declspec(dllexport) python_buffer decompress(const char* buffer_in)
 		all_tracks.push_back(writer.Transforms);
 	}
 
-	// std::cout << "Decompressed tracks" << std::endl;
-
 	anim_output output;
 
 	output.duration = compressed_anim->get_duration();
@@ -133,8 +131,6 @@ extern "C" __declspec(dllexport) python_buffer decompress(const char* buffer_in)
 	unsigned char* buffer_out = new unsigned char[buffer_out_size];
 
 	std::copy(binary_string.begin(), binary_string.end(), buffer_out);
-
-	// std::cout << "Data written" << std::endl;
 
 	python_buffer python_out;
 
@@ -185,7 +181,8 @@ extern "C" __declspec(dllexport) python_buffer compress(const char* buffer_in)
 	track_array_qvvf raw_track_list = load_tracks(buffer_in, allocator, sample_count, sample_rate, track_count);
 
 	compression_settings settings;
-	settings.level = compression_level8::medium;
+
+	settings.level = compression_level8::highest;
 	settings.rotation_format = rotation_format8::quatf_drop_w_variable;
 	settings.translation_format = vector_format8::vector3f_variable;
 	settings.scale_format = vector_format8::vector3f_variable;
@@ -206,9 +203,6 @@ extern "C" __declspec(dllexport) python_buffer compress(const char* buffer_in)
 		fail.data_buffer_size = 0;
 		return fail;
 	}
-	// std::cout << "Compressed main tracks" << std::endl;
-
-	std::string out_name = "test_compress.anm.pxd";
 	
 	// String to hold data instead of file
 	std::ostringstream data_string(std::ios::binary);

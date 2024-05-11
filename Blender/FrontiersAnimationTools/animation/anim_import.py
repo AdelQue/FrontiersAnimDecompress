@@ -1,16 +1,18 @@
 import bpy
 import mathutils
+import math
 import struct
 import os
 import io
+import time
 from bpy_extras.io_utils import ImportHelper
 from bpy.props import (BoolProperty,
-                       FloatProperty,
                        StringProperty,
                        EnumProperty,
                        CollectionProperty
                        )
 from ..FrontiersAnimDecompress.process_buffer import decompress
+
 
 def get_matrix_map_global(obj, matrix_map_local, scale_map):
     # Get global matrix of raw bone tracks, which are relative to parent track's local space.
@@ -36,8 +38,8 @@ def get_matrix_map_global(obj, matrix_map_local, scale_map):
 
 
 def set_pose_matrices_global(obj, matrix_map_global, frame, keyframe_rules):
-    # Update global positions without needing bpy.context.view_layer.update()
-    # Based on example in Blender docs https://docs.blender.org/api/current/bpy.types.Bone.html#convert_local_to_pose
+    # Update global positions without needing bpy.context.view_layer.update() based on example in Blender docs:
+    # https://docs.blender.org/api/current/bpy.types.Bone.html#bpy.types.Bone.convert_local_to_pose
     def rec(pbone, parent_matrix):
         if pbone.name in matrix_map_global:
             # Compute and assign local matrix, using the new parent matrix
@@ -95,6 +97,12 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
         default=False,
     )
 
+    bool_root_motion: BoolProperty(
+        name="Import Root Motion",
+        description="Import root motion animation onto skeleton object's transform",
+        default=True,
+    )
+
     bool_keyframe_needed: BoolProperty(
         name="Insert Needed Keyframes Only",
         description="Refrains from inserting keyframes if values are exact same as previous frame",
@@ -113,9 +121,12 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
         default="loop_no",
     )
 
+
+
+
     def __init__(self):
         self.bool_skel_conv = False
-        self.bool_is_loop = False
+        self.has_errors = False
 
     def draw(self, context):
         layout = self.layout
@@ -126,8 +137,12 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
         ui_scene_row_loop.label(text="Fix Loop:")
         ui_scene_row_loop.prop(self, "loop_check", text="")
 
-        ui_scene_row_needed = ui_scene_box.row()
-        ui_scene_row_needed.prop(self, "bool_keyframe_needed", )
+        ui_scene_row_root_motion = ui_scene_box.row()
+        ui_scene_row_root_motion.prop(self, "bool_root_motion", )
+
+        # Currently non-functional
+        # ui_scene_row_needed = ui_scene_box.row()
+        # ui_scene_row_needed.prop(self, "bool_keyframe_needed", )
 
         ui_bone_box = layout.box()
         ui_bone_box.label(text="Armature Settings", icon='ARMATURE_DATA')
@@ -144,7 +159,9 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
             return False
 
     def execute(self, context):
+        start_time = time.time()
         arm_active = bpy.context.active_object
+        rms = 1 / math.sqrt(2)
         if not arm_active:
             self.report({'INFO'}, f"No active armature. Please select an armature.")
             return {'CANCELLED'}
@@ -152,17 +169,33 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
             self.report({'INFO'}, f"Active object \"{arm_active.name}\" is not an armature. Please select an armature.")
             return {'CANCELLED'}
 
+        if self.bool_root_motion:
+            arm_active.rotation_mode = 'QUATERNION'
+
         bone_count = len(arm_active.pose.bones)
         scene_active = bpy.context.scene
         for bone in arm_active.data.bones:
             bone.inherit_scale = 'ALIGNED'
 
-        print("Importing animations...")
+        error_anims = []
+        print("Importing PXD animations...")
+
+        num_files = len(self.files)
+        status_len = 0
         for i, file in enumerate(self.files):
-            # print(f"{i + 1} / {len(self.files)}")
+            # Single line status printing
+            status = f"{i + 1} / {num_files}\t{file.name}"
+            print(' ' * status_len, end=f'\r{status}\r')
+            status_len = len(status) + 32
+
             anim_file = open(os.path.join(os.path.dirname(self.filepath), file.name), "rb")
-            if not self.anim_check(anim_file):
-                return {'CANCELLED'}
+            if not self.anim_check(anim_file, file.name):
+                error_anims.append(file.name)
+                self.report(
+                    {'WARNING'},
+                    f"{file.name} import was skipped due to errors."
+                )
+                continue
 
             anim_file.seek(4, 0)
             file_size = int.from_bytes(anim_file.read(4), byteorder='little')
@@ -173,24 +206,35 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
             anim_file.seek(0x80, 0)
             main_buffer_compressed = anim_file.read(main_buffer_length)
             main_buffer = decompress(main_buffer_compressed)
+            if not len(main_buffer.getvalue()):
+                error_anims.append(file.name)
+                self.report({'WARNING'}, f"{file.name} buffer failed to initialize. File skipped.")
+                continue
+
             del main_buffer_compressed
 
             anim_file.seek(0x70, 0)
             root_buffer_offset = int.from_bytes(anim_file.read(8), byteorder='little')
 
             # Animations compressed with old FrontiersAnimDecompress.exe had non-existent root chunk offsets beyond EOF
-            if 0 < root_buffer_offset < file_size:
+            if self.bool_root_motion and (0 < root_buffer_offset < file_size):
                 anim_file.seek(root_buffer_offset + 0x40, 0)
                 root_buffer_length = int.from_bytes(anim_file.read(4), byteorder='little')
                 anim_file.seek(root_buffer_offset + 0x40, 0)
                 root_buffer_compressed = anim_file.read(root_buffer_length)
                 root_buffer = decompress(root_buffer_compressed)
+                if not len(root_buffer.getvalue()):
+                    error_anims.append(file.name)
+                    self.report({'INFO'}, f"{file.name} root buffer failed to initialize. Skipping root motion.")
+                    root_buffer = None
                 del root_buffer_compressed
+            else:
+                root_buffer = None
 
             anim_file.close()
             del anim_file
 
-            frame_time = struct.unpack('<f', main_buffer.read(0x4))[0]
+            duration = struct.unpack('<f', main_buffer.read(0x4))[0]
             frame_rate = struct.unpack('<f', main_buffer.read(0x4))[0]
             frame_count = int.from_bytes(main_buffer.read(4), byteorder='little')
             track_count = int.from_bytes(main_buffer.read(4), byteorder='little')
@@ -206,20 +250,18 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
                 anim_name = anim_name.replace(ext, "")
 
             keyframe_rules = set()
-            if self.loop_check == "loop_yes":
-                self.bool_is_loop = True
-            elif self.loop_check == "loop_auto" and "_loop" in anim_name:
-                self.bool_is_loop = True
+            if self.loop_check == "loop_yes" or (self.loop_check == "loop_auto" and "_loop" in anim_name):
+                bool_is_loop = True
             else:
-                self.bool_is_loop = False
-            if self.bool_is_loop:
+                bool_is_loop = False
+            if bool_is_loop:
                 keyframe_rules.add('INSERTKEY_CYCLE_AWARE')
 
             arm_active.animation_data_create()
             action_active = bpy.data.actions.new(anim_name)
             arm_active.animation_data.action = action_active
 
-            # frame_rate = (frame_count - 1) / frame_time
+            # frame_rate = (frame_count - 1) / duration
             scene_active.render.fps = int(round(frame_rate))
             scene_active.render.fps_base = scene_active.render.fps / frame_rate
             scene_active.frame_start = 0
@@ -228,70 +270,121 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
             action_active.use_frame_range = True
             action_active.frame_start = 0
             action_active.frame_end = frame_count - 1
-            if self.bool_is_loop:
+            if bool_is_loop:
                 action_active.use_cyclic = True
 
-            action_active["pxd_export"] = True
-            action_active["pxd_fps"] = frame_rate
+            action_active.pxd_export = True
+            action_active.pxd_fps = frame_rate
+            if self.bool_root_motion:
+                action_active.pxd_root = True
+            else:
+                action_active.pxd_root = False
 
             for frame in range(frame_count):
-                if self.bool_is_loop and frame == frame_count - 1:
+                if bool_is_loop and frame == frame_count - 1:
                     main_buffer.seek(0x10)
                 else:
-                    main_buffer.seek(0x10 + 0x30 * track_count * frame)
+                    main_buffer.seek(0x10 + (0x30 * track_count * frame))
 
                 matrix_map_local = {}
                 scale_map = {}
 
                 for i in range(bone_count):
                     pbone = arm_active.pose.bones[i]
-                    if i not in range(track_count):
-                        matrix_map_local.update({pbone.name: mathutils.Matrix()})
-                        scale_map.update({pbone.name: mathutils.Vector((1.0, 1.0, 1.0))})
-                    else:
-                        if self.bool_yx_skel:
-                            qz, qx, qy, qw = struct.unpack('<ffff', main_buffer.read(0x10))
-                            pz, px, py = struct.unpack('<fff', main_buffer.read(0xC))
-                            main_buffer.read(4)  # Float: Bone length
-                            sz, sx, sy = struct.unpack('<fff', main_buffer.read(0xC))
-                            main_buffer.read(4)  # Float: 1.0
-                        else:
-                            qx, qy, qz, qw = struct.unpack('<ffff', main_buffer.read(0x10))
-                            px, py, pz = struct.unpack('<fff', main_buffer.read(0xC))
-                            main_buffer.read(4)  # Float: Bone length
-                            sx, sy, sz = struct.unpack('<fff', main_buffer.read(0xC))
-                            main_buffer.read(4)  # Float: 1.0
+                    if i in range(track_count):
+                        r0, r1, r2, r3 = struct.unpack('<ffff', main_buffer.read(0x10))
+                        p0, p1, p2 = struct.unpack('<fff', main_buffer.read(0xC))
+                        main_buffer.read(4)  # Float: Bone length
+                        s0, s1, s2 = struct.unpack('<fff', main_buffer.read(0xC))
+                        main_buffer.read(4)  # Float: 1.0
 
-                        # Keep location and rotation separate from scale in order to calculate proper global matrix
-                        tmp_loc = mathutils.Vector((px, py, pz))
-                        tmp_rot = mathutils.Quaternion((qw, qx, qy, qz))
+
+                        if self.bool_yx_skel:
+                            tmp_rot = mathutils.Quaternion((r3, r2, r0, r1))
+                            tmp_loc = mathutils.Vector((p2, p0, p1))
+                            if not pbone.parent:
+                                tmp_rot @= mathutils.Quaternion((0.5, -0.5, -0.5, -0.5))
+                        else:
+                            tmp_rot = mathutils.Quaternion((r3, r0, r1, r2))
+                            tmp_loc = mathutils.Vector((p0, p1, p2))
+
                         matrix = mathutils.Matrix.LocRotScale(tmp_loc, tmp_rot, mathutils.Vector((1.0, 1.0, 1.0)))
                         matrix_map_local.update({pbone.name: matrix})
 
-                        if (sx, sy, sz) != (0.0, 0.0, 0.0):
-                            tmp_scale = mathutils.Vector((sx, sy, sz))
+                        if (s0, s1, s2) != (0.0, 0.0, 0.0):
+                            if self.bool_yx_skel:
+                                tmp_scale = mathutils.Vector((s2, s0, s1))
+                            else:
+                                tmp_scale = mathutils.Vector((s0, s1, s2))
                         else:
                             tmp_scale = mathutils.Vector((1.0, 1.0, 1.0))
+
                         scale_map.update({pbone.name: tmp_scale})
+                    else:
+                        matrix_map_local.update({pbone.name: mathutils.Matrix()})
+                        scale_map.update({pbone.name: mathutils.Vector((1.0, 1.0, 1.0))})
 
                 matrix_map_global = get_matrix_map_global(arm_active, matrix_map_local, scale_map)
                 set_pose_matrices_global(arm_active, matrix_map_global, frame, keyframe_rules)
 
+                if root_buffer:
+                    if bool_is_loop and frame == frame_count - 1:
+                        root_buffer.seek(0x10)
+                    else:
+                        root_buffer.seek(0x10 + (0x30 * frame))
+
+                    r0, r1, r2, r3 = struct.unpack('<ffff', root_buffer.read(0x10))
+                    p0, p1, p2 = struct.unpack('<fff', root_buffer.read(0xC))
+                    root_buffer.read(4)  # Float: Bone length
+                    s0, s1, s2 = struct.unpack('<fff', root_buffer.read(0xC))
+                    root_buffer.read(4)  # Float: 1.0
+
+                    tmp_rot = mathutils.Quaternion((rms, rms, 0.0, 0.0))
+                    tmp_rot @= mathutils.Quaternion((r3, r0, r1, r2))
+                    tmp_loc = mathutils.Vector((p0, -p2, p1))
+                    if (s0, s1, s2) != (0.0, 0.0, 0.0):
+                        tmp_scale = mathutils.Vector((s0, s1, s2))
+                    else:
+                        tmp_scale = mathutils.Vector((1.0, 1.0, 1.0))
+
+                    arm_active.rotation_quaternion = tmp_rot
+                    arm_active.location = tmp_loc
+                    arm_active.scale = tmp_scale
+
+                    arm_active.keyframe_insert('rotation_quaternion', frame=frame, options=keyframe_rules)
+                    arm_active.keyframe_insert('location', frame=frame, options=keyframe_rules)
+                    arm_active.keyframe_insert('scale', frame=frame, options=keyframe_rules)
+
+                elif self.bool_root_motion and not root_buffer:
+                    self.report({'INFO'}, "No root motion chunk found.")
+
+        if error_anims:
+            self.report({'INFO'}, "Some animations were skipped due to errors. Please see console for list of skipped animations.")
+            for anim in error_anims:
+                print(anim)
+        else:
+
+            self.report({'INFO'}, "All animations imported successfully.")
+
+        end_time = time.time()
+        time_elapsed = end_time - start_time
+        print(' ' * status_len, end=f"\rFinished importing {num_files} animations in {round(time_elapsed, 2)} seconds.\n")
+
         return {'FINISHED'}
 
-    def anim_check(self, file):
+    def anim_check(self, file, filename):
         file.seek(0x40, 0)
         magic = file.read(4)
         version = int.from_bytes(file.read(4), byteorder='little')
         compressed = int.from_bytes(file.read(4), byteorder='little')
         if magic != b'NAXP':
-            self.report({'ERROR'}, "Not a valid PXD animation file")
+            self.report({'ERROR'}, f"{filename}: Not a valid PXD animation file")
             return False
         if version != 512:
-            self.report({'ERROR'}, "Wrong PXD version")
+            self.report({'ERROR'}, f"{filename}: Wrong PXD version")
             return False
         if compressed != 2048:
-            self.report({'ERROR'}, "PXD animation is uncompressed")
+            self.report({'ERROR'}, f"{filename}: PXD animation is uncompressed")
             return False
         file.seek(0, 0)
         return True
