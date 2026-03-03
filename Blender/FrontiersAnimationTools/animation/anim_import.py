@@ -16,7 +16,6 @@ from .console_output import BatchProgress
 
 RMS = 1 / math.sqrt(2)
 
-
 # Convert to global matrix with locations being unaffected by scale
 def get_matrix_map_global(obj, matrix_map_local, scale_map):
     # Get global matrix of raw bone tracks, which are relative to parent track's local space.
@@ -315,7 +314,11 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
                 continue
 
             scene_active.render.fps = int(round(anim_param.frame_rate))
-            scene_active.render.fps_base = scene_active.render.fps / anim_param.frame_rate
+
+            if anim_param.frame_rate != 0.0:
+                scene_active.render.fps_base = scene_active.render.fps / anim_param.frame_rate # in case calculated frame rate ends up as non-integer value
+            else:
+                scene_active.render.fps_base = 1.0
 
             if bone_count != anim_param.track_count:
                 self.report(
@@ -367,9 +370,10 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
                 continue
 
             # Mainly for uncompressed actions, doesn't really affect actions where every possible keyframe is filled
-            for fcurve in action_active.fcurves:
-                for point in fcurve.keyframe_points:
-                    point.interpolation = 'LINEAR'
+            if bpy.app.version[0] < 5:  # temporary workaround
+                for fcurve in action_active.fcurves:
+                    for point in fcurve.keyframe_points:
+                        point.interpolation = 'LINEAR'
 
             # Keyframes become invisible if this is set earlier than anim import.
             if self.pad_loop and anim_param.is_compressed:

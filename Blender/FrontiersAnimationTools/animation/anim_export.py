@@ -18,7 +18,7 @@ NULL = 0
 # Function used by batch export, keep outside of operator class
 def anim_export(self_pass, filepath, arm_active, action_active, start_frame, end_frame, frame_rate):
     frame_count = end_frame - start_frame + 1
-    if frame_count > 1:
+    if (frame_count > 1) and (frame_rate > 0.0):
         duration = (frame_count - 1) / frame_rate
     else:
         duration = 0.0
@@ -54,7 +54,21 @@ def anim_export(self_pass, filepath, arm_active, action_active, start_frame, end
             # Matrix scales necessary to obtain local scales resulting from constraints
             if pbone.parent:
                 parent_scale = pbone.parent.matrix.to_scale()
-                tmp_scale = mathutils.Vector((tmp_scale.x / parent_scale.x, tmp_scale.y / parent_scale.y, tmp_scale.z / parent_scale.z))
+
+                if parent_scale.x != 0.0:
+                    tmp_scale.x /= parent_scale.x
+                else:
+                    tmp_scale.x = 0.0
+
+                if parent_scale.y != 0.0:
+                    tmp_scale.y /= parent_scale.y
+                else:
+                    tmp_scale.y = 0.0
+
+                if parent_scale.z != 0.0:
+                    tmp_scale.z /= parent_scale.z
+                else:
+                    tmp_scale.z = 0.0
 
             tmp_matrix = mathutils.Matrix.LocRotScale(tmp_loc, tmp_rot, mathutils.Vector((1.0, 1.0, 1.0)))
             matrix_map_temp.update({pbone.name: tmp_matrix})
@@ -277,7 +291,11 @@ class FrontiersAnimExport(bpy.types.Operator, ExportHelper):
             bone.inherit_scale = 'ALIGNED'
 
         action_active = arm_active.animation_data.action
-        frame_rate = scene_active.render.fps / scene_active.render.fps_base
+
+        if scene_active.render.fps_base > 0.0:
+            frame_rate = scene_active.render.fps / scene_active.render.fps_base
+        else:
+            frame_rate = scene_active.render.fps
 
         if not anim_export(self,
                            self.filepath,

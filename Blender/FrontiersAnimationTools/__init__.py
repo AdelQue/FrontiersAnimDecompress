@@ -14,12 +14,11 @@ from .ui import side_panel
 bl_info = {
     "name": "Hedgehog Engine PXD Animation Tools",
     "author": "AdelQ, WistfulHopes, Turk645",
-    "version": (2, 1, 4),
-    "blender": (4, 1, 0),
+    "version": (2, 1, 5),
+    "blender": (4, 4, 0),
     "location": "File > Import/Export",
     "description": "Animation and skeleton importer/exporter for Hedgehog Engine 2 games with compressed animations",
-    # TODO: Update HedgeDocs for this tool
-    # "doc_url": "https://hedgedocs.com/guides/hedgehog-engine/rangers/animation/import-export/",
+    "doc_url": "https://hedgedocs.com/index.php/Skeletal_Animation_Editing",
     "tracker_url": "https://github.com/WistfulHopes/PXDAnimationTools/issues/",
     "category": "Import-Export",
 }
