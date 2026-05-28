@@ -369,8 +369,13 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
                 self.progress.update_error(error=f"{file.name} compressed animation import couldn't be processed. File skipped.")
                 continue
 
-            # Mainly for uncompressed actions, doesn't really affect actions where every possible keyframe is filled
-            if bpy.app.version[0] < 5:  # temporary workaround
+            if not anim_param.is_compressed:
+                if bpy.app.version[0] < 5:
+                    fcurves = action_active.fcurves
+                else:
+                    strip = action.layers[0].strips[0]
+                    channelbag = strip.channelbag(slot)
+                    fcurves = channelbag.fcurves
                 for fcurve in action_active.fcurves:
                     for point in fcurve.keyframe_points:
                         point.interpolation = 'LINEAR'
