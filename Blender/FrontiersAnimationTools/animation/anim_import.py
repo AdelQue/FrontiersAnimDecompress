@@ -373,12 +373,13 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
                 if bpy.app.version[0] < 5:
                     fcurves = action_active.fcurves
                 else:
-                    strip = action.layers[0].strips[0]
+                    slot = arm_active.animation_data.action_slot
+                    strip = action_active.layers[0].strips[0]
                     channelbag = strip.channelbag(slot)
                     fcurves = channelbag.fcurves
-                for fcurve in action_active.fcurves:
-                    for point in fcurve.keyframe_points:
-                        point.interpolation = 'LINEAR'
+                for fc in fcurves:
+                    for kp in fc.keyframe_points:
+                        kp.interpolation = 'LINEAR'
 
             # Keyframes become invisible if this is set earlier than anim import.
             if self.pad_loop and anim_param.is_compressed:
