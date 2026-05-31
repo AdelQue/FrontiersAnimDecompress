@@ -603,7 +603,7 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
         root_i = track_count
 
         for frame in range(self.frame_count_loop):
-            self.progress.resume(frame_num=frame)
+            # self.progress.resume(frame_num=frame)
             if self.pad_loop:
                 main_buffer.seek(0x10 + (0x30 * track_count * (frame % (frame_count - 1))))
             else:
