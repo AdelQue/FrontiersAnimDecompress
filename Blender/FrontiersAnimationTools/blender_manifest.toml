@@ -1,4 +1,4 @@
-blender_version_min = "4.4.0"
+blender_version_min = "4.2.0"
 id = "FrontiersAnimationTools"
 license = ["SPDX:GPL-3.0-or-later"]
 maintainer = "AdelQue, WistfulHopes"
