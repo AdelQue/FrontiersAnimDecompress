@@ -325,8 +325,8 @@ def get_uncompressed_frame_table(anim_file, frame_count, track_count, table_offs
 
 
 class PXDAnimParam:
-    def __init__(self, file):
-        self.name = file.name
+    def __init__(self, file, name):
+        self.name = name
         for ext in [".outanim", ".anm", ".pxd"]:
             self.name = self.name.replace(ext, "")
 
@@ -482,8 +482,7 @@ class FrontiersAnimImport(bpy.types.Operator, ImportHelper):
         for f, file in enumerate(self.files):
             # Begin import
             anim_file = open(os.path.join(os.path.dirname(self.filepath), file.name), "rb")
-            anim_param = PXDAnimParam(anim_file)
-
+            anim_param = PXDAnimParam(anim_file, file.name)
             if not anim_param.is_compressed:    # TODO
                 self.progress.update_error(error=f"{file.name} compressed animation import is currently broken. File skipped. Sorry! :(")
                 continue
