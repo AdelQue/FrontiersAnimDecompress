@@ -10,6 +10,19 @@ from .skeleton.skeleton_import import HedgehogSkeletonImport
 
 from .ui import side_panel
 
+# Maintain for older Blender versions
+bl_info = {
+    "name": "PXD Animation Tools",
+    "author": "AdelQue, WistfulHopes",
+    "version": (2, 2, 1),
+    "blender": (3, 6, 0),
+    "location": "File > Import/Export",
+    "description": "UNSTABLE: Create and modify skeletal animation data (.pxd files) for Hedgehog Engine 2 titles",
+    "doc_url": "https://hedgedocs.com/index.php/Skeletal_Animation_Editing",
+    "tracker_url": "https://github.com/WistfulHopes/PXDAnimationTools/issues/",
+    "category": "Import-Export",
+}
+
 
 def register():
     # Import/Export

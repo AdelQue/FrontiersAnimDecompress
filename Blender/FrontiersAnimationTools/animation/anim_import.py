@@ -89,9 +89,29 @@ class ActionData:
         self.object.animation_data.action = self.action
 
     def make_root_curves(self):
-        fc_loc = [self.fc_container.fcurves.ensure("location", index=i_loc) for i_loc in range(3)]
-        fc_rot = [self.fc_container.fcurves.ensure("rotation_quaternion", index=i_rot) for i_rot in range(4)]
-        fc_scl = [self.fc_container.fcurves.ensure("scale", index=i_scl) for i_scl in range(3)]
+        fcurves = self.fc_container.fcurves
+
+        if is_version_at_least(5, 0):
+            fc_loc = [fcurves.ensure("location", index=i_loc) for i_loc in range(3)]
+            fc_rot = [fcurves.ensure("rotation_quaternion", index=i_rot) for i_rot in range(4)]
+            fc_scl = [fcurves.ensure("scale", index=i_scl) for i_scl in range(3)]
+
+        else:
+            fc_loc = [fcurves.find(data_path="location", index=i_loc) for i_loc in range(3)]
+            for i_loc in range(3):
+                if fc_loc[i_loc] == None:
+                    fc_loc[i_loc] = fcurves.new("location", index=i_loc)
+
+            fc_rot = [fcurves.find(data_path="rotation_quaternion", index=i_rot) for i_rot in range(4)]
+            for i_rot in range(4):
+                if fc_rot[i_rot] == None:
+                    fc_rot[i_rot] = fcurves.new("rotation_quaternion", index=i_rot)
+
+            fc_scl = [fcurves.find(data_path="scale", index=i_scl) for i_scl in range(3)]
+            for i_scl in range(3):
+                if fc_scl[i_scl] == None:
+                    fc_scl[i_scl] = fcurves.new("scale", index=i_scl)
+
 
         for fc in fc_loc + fc_scl:
             fc.color_mode = 'AUTO_RGB'

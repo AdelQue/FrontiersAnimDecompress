@@ -11,16 +11,28 @@ import io
 import ctypes
 
 
+def is_version_at_least(major, minor):
+    if bpy.app.version[0] > major:
+        return True
+    elif bpy.app.version[0] == major and bpy.app.version[1] >= minor:
+        return True
+    return False
+
+
 class ACLCompressor:
     class MemoryBuffer(ctypes.Structure):
         _fields_ = [("offset", ctypes.POINTER(ctypes.c_ubyte)),
                     ("size", ctypes.c_size_t)]
 
-    path = bpy.utils.user_resource('EXTENSIONS', path='user_default\\FrontiersAnimationTools\\FrontiersAnimDecompress')
+    if is_version_at_least(4, 2):
+        path = bpy.utils.user_resource('EXTENSIONS', path='user_default/FrontiersAnimationTools/FrontiersAnimDecompress')
+    else:
+        path = bpy.utils.user_resource('SCRIPTS', path='Addons/FrontiersAnimationTools/FrontiersAnimDecompress')
+
     name = "FrontiersAnimDecompress.dll"
 
     def __init__(self):
-        self.dll = ctypes.CDLL(f"{self.path}\\{self.name}")
+        self.dll = ctypes.CDLL(f"{self.path}/{self.name}")
         self.dll.decompress.restype = self.MemoryBuffer
         self.dll.compress.restype = self.MemoryBuffer
 
