@@ -1,5 +1,7 @@
 # PXD Animation Tools
 Blender addon for importing and exporting compressed Hedgehog Engine 2 animations (.anm.pxd)
+###### Also known as _"Frontiers Animation Tools"_ or _"FrontiersAnimDecompress"_ in past lives
+
 
 ## Features:
 - PXD Skeleton import and export with bone reorientation
@@ -10,15 +12,17 @@ Blender addon for importing and exporting compressed Hedgehog Engine 2 animation
 
 
 ## Documentation:
-*To-do: make this better*
+### [Link to HedgeDocs Page 📖](https://hedgedocs.com/index.php/Skeletal_Animation_Editing)
+### [Link to Introduction Video ▶️](https://www.youtube.com/watch?v=sVKX8YvePZY)
+[![Animation Modding for Sonic Frontiers/Shadow Generations](https://img.youtube.com/vi/sVKX8YvePZY/0.jpg)](https://www.youtube.com/watch?v=sVKX8YvePZY)
 
-In the meantime, just a couple notes:
+A couple notes while you're here:
 
 - Batch exporting is found in the 3D viewports side menu under the "Animation" tab.
 
 ![Side Menu](images/side_menu.png)
 - A skeleton needs to be selected before importing or exporting an animation.
-- Skeletons from ModelFBX outputs may differ from the .skl.pxd files. If you plan to export animations for an unmodified skeleton, consider importing the .skl.pxd file separately to replace the skeleton that came with the ModelFBX output.
+- Skeletons from ModelFBX outputs/HEIO imports may differ from the .skl.pxd files. If you plan to export animations for an unmodified skeleton, consider importing the .skl.pxd file separately to replace the skeleton that came with the ModelFBX output.
 - Importing a skeleton with YX orientation will support mirroring in Blender. However, you will need to enable YX reorientation for any and all subsequent skeleton exports, animation imports and exports.
 - The skeleton's native orientation should be Y-up (lying on its back in Blender), and then rotated +90deg along X to make it upright with Blender's Z-up space. Root motion imports and exports will base it's transformation off this orientation.
 - This tool adds animation keys for every bone for every frame. Having many actions stored in Blender in this manner will make Blender less responsive and use *lots* of memory. Try to keep the total number of actions low and maybe think twice before importing every animation at once. 
